@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   addDoc,
@@ -31,7 +31,14 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ThemeToggle } from "@/components/theme-toggle";
 import ProtectedRouteWithPrivilege from "@/components/auth/protected-route-with-privilege";
-import { Plus, Save, ArrowLeft, Trash2 } from "lucide-react";
+import {
+  Plus,
+  Save,
+  ArrowLeft,
+  Trash2,
+  UploadCloud,
+  FileText,
+} from "lucide-react";
 import NotificationsBell from "@/components/notifications/NotificationsBell";
 
 /* ---------------- Types ---------------- */
@@ -126,18 +133,23 @@ export default function AddSalesOrderPage() {
   const [loadingVisas, setLoadingVisas] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [services, setServices] = useState<ServiceItem[]>([newService("Flight")]);
+  const [services, setServices] = useState<ServiceItem[]>([
+    newService("Flight"),
+  ]);
 
-  // ✅ يكتب يدويًا من الموظف
   const [fullAmount, setFullAmount] = useState(0);
   const [paidAmount, setPaidAmount] = useState(0);
 
-  // ✅ ملفات متعددة فقط
   const [paymentFiles, setPaymentFiles] = useState<File[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const totals = useMemo(() => {
     const totalCost = services.reduce((a, s) => a + safeNum(s.cost), 0);
-    const remainingAmount = Math.max(0, safeNum(fullAmount) - safeNum(paidAmount));
+    const remainingAmount = Math.max(
+      0,
+      safeNum(fullAmount) - safeNum(paidAmount)
+    );
     const totalProfit = safeNum(fullAmount) - totalCost;
 
     return {
@@ -250,7 +262,9 @@ export default function AddSalesOrderPage() {
     const selected = visas.find((v) => v.id === visaId);
     if (!selected) return;
 
-    const label = `${selected.flag ?? ""} ${selected.countryName} – ${selected.visaType} | ${selected.visaCategory}${
+    const label = `${selected.flag ?? ""} ${selected.countryName} – ${
+      selected.visaType
+    } | ${selected.visaCategory}${
       typeof selected.durationDays === "number" && selected.durationDays > 0
         ? ` | ${selected.durationDays} days`
         : ""
@@ -272,8 +286,6 @@ export default function AddSalesOrderPage() {
       };
 
       current.description = label;
-
-      // ✅ الكوست الابتدائي من الفيزا
       current.unitCost = safeNum(selected.priceFrom);
 
       copy[serviceIndex] = recalcLine(current);
@@ -281,9 +293,55 @@ export default function AddSalesOrderPage() {
     });
   };
 
+  /* -------- File Upload (Drag & Drop) -------- */
+
+  const mergeFiles = (incomingFiles: File[]) => {
+    setPaymentFiles((prev) => {
+      const all = [...prev, ...incomingFiles];
+
+      const unique = all.filter(
+        (file, index, self) =>
+          index ===
+          self.findIndex(
+            (f) =>
+              f.name === file.name &&
+              f.size === file.size &&
+              f.lastModified === file.lastModified
+          )
+      );
+
+      return unique;
+    });
+  };
+
   const onSelectFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    setPaymentFiles(files);
+    mergeFiles(files);
+  };
+
+  const removePaymentFile = (index: number) => {
+    setPaymentFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length) mergeFiles(files);
   };
 
   const uploadPaymentFiles = async (orderId: string) => {
@@ -292,7 +350,9 @@ export default function AddSalesOrderPage() {
     const uploaded: UploadedPaymentFile[] = [];
 
     for (const file of paymentFiles) {
-      const filePath = `salesOrders/${orderId}/payments/${Date.now()}-${file.name}`;
+      const filePath = `salesOrders/${orderId}/payments/${Date.now()}-${
+        file.name
+      }`;
       const fileRef = ref(storage, filePath);
 
       await uploadBytes(fileRef, file);
@@ -613,17 +673,63 @@ export default function AddSalesOrderPage() {
 
                 <Separator />
 
-                {/* Payment Files */}
+                {/* Payment Files - Drag & Drop */}
                 <div className="space-y-3">
-                  <div>
-                    <Label className="my-2">Upload Payment Files</Label>
-                    <Input type="file" multiple onChange={onSelectFiles} />
+                  <Label className="my-2 block">Upload Payment Files</Label>
+
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`cursor-pointer rounded-xl border-2 border-dashed p-6 text-center transition ${
+                      isDragging
+                        ? "border-primary bg-primary/5"
+                        : "border-muted-foreground/25 hover:border-primary/50"
+                    }`}
+                  >
+                    <div className="flex flex-col items-center gap-3">
+                      <UploadCloud className="w-8 h-8 text-muted-foreground" />
+                      <div className="space-y-1">
+                        <p className="font-medium">
+                          Drag and drop files here
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          or click to browse files
+                        </p>
+                      </div>
+                    </div>
+
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={onSelectFiles}
+                    />
                   </div>
 
                   {paymentFiles.length > 0 && (
-                    <div className="text-sm text-muted-foreground space-y-1">
+                    <div className="space-y-2">
                       {paymentFiles.map((file, index) => (
-                        <div key={index}>{file.name}</div>
+                        <div
+                          key={`${file.name}-${index}`}
+                          className="flex items-center justify-between rounded-lg border p-3"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText className="w-4 h-4 text-muted-foreground" />
+                            <span className="text-sm truncate">{file.name}</span>
+                          </div>
+
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="icon"
+                            onClick={() => removePaymentFile(index)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       ))}
                     </div>
                   )}
@@ -632,7 +738,9 @@ export default function AddSalesOrderPage() {
                 <div className="flex justify-end gap-3">
                   <Button
                     variant="outline"
-                    onClick={() => router.push(`/sales/customers/${customerId}`)}
+                    onClick={() =>
+                      router.push(`/sales/customers/${customerId}`)
+                    }
                   >
                     <ArrowLeft className="w-4 h-4 mr-1" /> Back
                   </Button>
