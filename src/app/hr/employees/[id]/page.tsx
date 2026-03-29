@@ -1,5 +1,4 @@
 "use client";
-export const dynamic = "force-client";
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
