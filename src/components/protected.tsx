@@ -1,25 +1,35 @@
 "use client";
-import { ReactNode } from "react";
+
+import React from "react";
 import { useAuth } from "@/context/AuthContext";
-import { redirect } from "next/navigation";
-import { LoadingProgress } from "./loading-progrss";
+
+type ProtectedProps = {
+  children: React.ReactNode;
+  requiredAnyOf?: string[];
+};
 
 export default function Protected({
   children,
-  requiredAnyOf,
-}: {
-  children: ReactNode;
-  requiredAnyOf?: string[]; // أمثلة: ["admin"] أو ["projects.read","admin"]
-}) {
-  const { user, loading, role, privileges } = useAuth();
-  if (loading) return <LoadingProgress />;
-  if (!user) redirect("/login");
+  requiredAnyOf = [],
+}: ProtectedProps) {
+  const { role, privileges, loading } = useAuth();
 
-  if (requiredAnyOf && requiredAnyOf.length) {
+  if (loading) {
+    return <div className="p-6">Loading...</div>;
+  }
+
+  const safePrivileges: string[] = Array.isArray(privileges)
+    ? privileges.filter((item): item is string => typeof item === "string")
+    : [];
+
+  if (requiredAnyOf.length > 0) {
     const ok =
       requiredAnyOf.some((r) => r === role) ||
-      requiredAnyOf.some((p) => privileges.includes(p));
-    if (!ok) return <div className="p-6">Don't have permission.</div>;
+      requiredAnyOf.some((p) => safePrivileges.includes(p));
+
+    if (!ok) {
+      return <div className="p-6">Don't have permission.</div>;
+    }
   }
 
   return <>{children}</>;
