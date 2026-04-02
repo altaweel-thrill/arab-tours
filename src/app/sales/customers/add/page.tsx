@@ -44,16 +44,53 @@ export default function AddCustomerPage() {
   const router = useRouter();
   const { user } = useAuth();
 
-  const [customer, setCustomer] = useState({
-    name: "",
-    phone: "",
-    email: "",
-    nationality: "",
-    passportNo: "",
-    address: "",
-    dob: "",
-    notes: "",
-  });
+const [customer, setCustomer] = useState({
+  name: "",
+  phone: "",
+  email: "",
+  nationality: "",
+  passportNo: "",
+  address: "",
+  dob: "",
+  notes: "",
+});
+
+const NATIONALITIES = [
+  "Saudi",
+  "Egyptian",
+  "Jordanian",
+  "Palestinian",
+  "Syrian",
+  "Lebanese",
+  "Iraqi",
+  "Kuwaiti",
+  "Qatari",
+  "Bahraini",
+  "Omani",
+  "Emirati",
+  "Yemeni",
+  "Sudanese",
+  "Moroccan",
+  "Tunisian",
+  "Algerian",
+  "Libyan",
+  "Turkish",
+  "Indian",
+  "Pakistani",
+  "Bangladeshi",
+  "Filipino",
+  "Indonesian",
+  "Nepali",
+  "Sri Lankan",
+  "British",
+  "American",
+  "Canadian",
+  "German",
+  "French",
+  "Italian",
+  "Spanish",
+  "Other",
+];
 
   const [family, setFamily] = useState<FamilyMember[]>([
     { name: "", relation: "" },
@@ -207,13 +244,20 @@ export default function AddCustomerPage() {
                       </div>
 
                       <div>
-                        <Label className="my-2">Nationality</Label>
-                        <Input
-                          placeholder="e.g. Saudi"
-                          value={customer.nationality}
-                          onChange={(e) => handleCustomerChange("nationality", e.target.value)}
-                        />
-                      </div>
+  <Label className="my-2">Nationality</Label>
+  <select
+    className="w-full border rounded-md h-10 px-3 bg-background"
+    value={customer.nationality}
+    onChange={(e) => handleCustomerChange("nationality", e.target.value)}
+  >
+    <option value="">Select nationality</option>
+    {NATIONALITIES.map((nationality) => (
+      <option key={nationality} value={nationality}>
+        {nationality}
+      </option>
+    ))}
+  </select>
+</div>
 
                       <div>
                         <Label className="my-2">Passport No.</Label>

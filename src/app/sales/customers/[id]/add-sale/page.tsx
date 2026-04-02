@@ -146,10 +146,7 @@ export default function AddSalesOrderPage() {
 
   const totals = useMemo(() => {
     const totalCost = services.reduce((a, s) => a + safeNum(s.cost), 0);
-    const remainingAmount = Math.max(
-      0,
-      safeNum(fullAmount) - safeNum(paidAmount)
-    );
+  const remainingAmount = safeNum(fullAmount) - safeNum(paidAmount);
     const totalProfit = safeNum(fullAmount) - totalCost;
 
     return {
