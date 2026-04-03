@@ -161,13 +161,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         {/* ✅ تمرير العناصر بدون أخطاء type */}
         <NavMain items={filteredNav} />
 
-        <NavProjects
-          projects={[
-            { name: "Design Engineering", url: "#", icon: Frame },
-            { name: "Sales & Marketing", url: "#", icon: PieChart },
-            { name: "Travel", url: "#", icon: Map },
-          ]}
-        />
+      
       </SidebarContent>
 
       <SidebarFooter>

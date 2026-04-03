@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   collection,
-  doc,
-  getDoc,
   getDocs,
   getCountFromServer,
   query,
@@ -13,6 +11,7 @@ import {
   orderBy,
   limit,
   Timestamp,
+  QueryConstraint,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { toast } from "sonner";
@@ -28,7 +27,6 @@ import {
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbList,
-  BreadcrumbPage,
 } from "@/components/ui/breadcrumb";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,7 +34,14 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import ProtectedRouteWithPrivilege from "@/components/auth/protected-route-with-privilege";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import NotificationsBell from "@/components/notifications/NotificationsBell";
 
 import {
@@ -124,9 +129,10 @@ export default function DashboardPage() {
   const [latestSales, setLatestSales] = useState<SimpleDoc[]>([]);
 
   useEffect(() => {
+    if (!user?.uid) return;
+
     (async () => {
       try {
-        // Time ranges
         const now = new Date();
         const day30Ago = startOfDay(subDays(now, 29));
         const day7Ago = startOfDay(subDays(now, 6));
@@ -135,16 +141,27 @@ export default function DashboardPage() {
         const prevMonthStart = startOfMonth(subMonths(now, 1));
         const prevMonthEnd = dfEndOfDay(subDays(thisMonthStart, 1));
 
-        // ---------- Counts (aggregate) ----------
-        const customersCountSnap = await getCountFromServer(query(collection(db, "customers")));
-        const packagesCountSnap = await getCountFromServer(query(collection(db, "packages")));
-        const salesCountSnap = await getCountFromServer(query(collection(db, "sales")));
+        // ---------- Counts ----------
+        const customersCountSnap = await getCountFromServer(
+          query(
+            collection(db, "customers"),
+            where("createdBy", "==", user.uid)
+          )
+        );
+
+        const packagesCountSnap = await getCountFromServer(
+          query(collection(db, "packages"))
+        );
+
+        const salesCountSnap = await getCountFromServer(
+          query(collection(db, "sales"))
+        );
+
         setCustomersCount(customersCountSnap.data().count);
         setPackagesCount(packagesCountSnap.data().count);
         setSalesCount(salesCountSnap.data().count);
 
-        // ---------- Revenue (sum totals once on recent 1000 sales if no aggregation) ----------
-        // We’ll fetch recent 1000 sales and sum totals as approximate revenue.
+        // ---------- Revenue ----------
         const salesForRevenueSnap = await getDocs(
           query(collection(db, "sales"), orderBy("createdAt", "desc"), limit(1000))
         );
@@ -155,23 +172,30 @@ export default function DashboardPage() {
         setRevenue(revenueSum);
 
         // ---------- Month-over-month deltas ----------
-        // Customers
         const custThisMonthSnap = await getCountFromServer(
           query(
             collection(db, "customers"),
+            where("createdBy", "==", user.uid),
             where("createdAt", ">=", toTS(thisMonthStart))
           )
         );
+
         const custPrevMonthSnap = await getCountFromServer(
           query(
             collection(db, "customers"),
+            where("createdBy", "==", user.uid),
             where("createdAt", ">=", toTS(prevMonthStart)),
             where("createdAt", "<=", toTS(prevMonthEnd))
           )
         );
-        setCustomersDelta(percentDelta(custThisMonthSnap.data().count, custPrevMonthSnap.data().count));
 
-        // Sales
+        setCustomersDelta(
+          percentDelta(
+            custThisMonthSnap.data().count,
+            custPrevMonthSnap.data().count
+          )
+        );
+
         const salesThisMonthSnap = await getCountFromServer(
           query(collection(db, "sales"), where("createdAt", ">=", toTS(thisMonthStart)))
         );
@@ -182,9 +206,13 @@ export default function DashboardPage() {
             where("createdAt", "<=", toTS(prevMonthEnd))
           )
         );
-        setSalesDelta(percentDelta(salesThisMonthSnap.data().count, salesPrevMonthSnap.data().count));
+        setSalesDelta(
+          percentDelta(
+            salesThisMonthSnap.data().count,
+            salesPrevMonthSnap.data().count
+          )
+        );
 
-        // Packages
         const pkgThisMonthSnap = await getCountFromServer(
           query(collection(db, "packages"), where("createdAt", ">=", toTS(thisMonthStart)))
         );
@@ -195,9 +223,13 @@ export default function DashboardPage() {
             where("createdAt", "<=", toTS(prevMonthEnd))
           )
         );
-        setPackagesDelta(percentDelta(pkgThisMonthSnap.data().count, pkgPrevMonthSnap.data().count));
+        setPackagesDelta(
+          percentDelta(
+            pkgThisMonthSnap.data().count,
+            pkgPrevMonthSnap.data().count
+          )
+        );
 
-        // Revenue delta (approx): compare sum of totals this month vs prev month on recent 1000
         const revThisMonthSnap = await getDocs(
           query(
             collection(db, "sales"),
@@ -219,18 +251,25 @@ export default function DashboardPage() {
         const revPrev = sumTotals(revPrevMonthSnap);
         setRevenueDelta(percentDelta(revThis, revPrev));
 
-        // ---------- Mini charts (7 days) ----------
-        setMiniCustomers(await buildMiniSeries("customers", day7Ago, now));
+        // ---------- Mini charts ----------
+        setMiniCustomers(
+          await buildMiniSeries("customers", day7Ago, now, false, user.uid)
+        );
         setMiniSales(await buildMiniSeries("sales", day7Ago, now));
         setMiniPackages(await buildMiniSeries("packages", day7Ago, now));
-        setMiniRevenue(await buildMiniSeries("sales", day7Ago, now, true)); // revenue uses totals
+        setMiniRevenue(await buildMiniSeries("sales", day7Ago, now, true));
 
         // ---------- 30-day Sales line chart ----------
         setSales30(await buildDailyCounts("sales", day30Ago, now));
 
         // ---------- Latest lists ----------
         const latestCustSnap = await getDocs(
-          query(collection(db, "customers"), orderBy("createdAt", "desc"), limit(5))
+          query(
+            collection(db, "customers"),
+            where("createdBy", "==", user.uid),
+            orderBy("createdAt", "desc"),
+            limit(5)
+          )
         );
         setLatestCustomers(
           latestCustSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as SimpleDoc[]
@@ -256,16 +295,13 @@ export default function DashboardPage() {
         setLoading(false);
       }
     })();
-  }, []);
-
-  /* ----------------------------- Render ----------------------------- */
+  }, [user?.uid]);
 
   return (
-    <ProtectedRouteWithPrivilege >
+    <ProtectedRouteWithPrivilege>
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset>
-          {/* Header */}
           <header className="flex h-16 items-center justify-between border-b bg-background/50 backdrop-blur-sm px-4">
             <div className="flex items-center gap-3">
               <SidebarTrigger className="-ml-1" />
@@ -275,18 +311,16 @@ export default function DashboardPage() {
                   <BreadcrumbItem className="hidden md:block">
                     <BreadcrumbLink href="/">Home</BreadcrumbLink>
                   </BreadcrumbItem>
-                 
                 </BreadcrumbList>
               </Breadcrumb>
             </div>
             <div className="ml-auto flex items-center gap-2">
-            <NotificationsBell userId={user?.uid ?? " " } />
-            <ThemeToggle />
-          </div>
+              <NotificationsBell userId={user?.uid ?? " "} />
+              <ThemeToggle />
+            </div>
           </header>
 
           <div className="min-h-screen p-6 bg-gradient-to-b from-muted/40 to-background">
-            {/* Cards */}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
               {loading ? (
                 <>
@@ -337,7 +371,6 @@ export default function DashboardPage() {
               )}
             </div>
 
-            {/* Sales Overview */}
             <Card className="border-0 bg-white/60 dark:bg-white/5 backdrop-blur-xl shadow-lg mb-6">
               <CardHeader className="pb-0">
                 <CardTitle>Sales Overview (Last 30 Days)</CardTitle>
@@ -360,14 +393,15 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
 
-            {/* Recent Lists */}
             <div className="grid gap-6 lg:grid-cols-3">
               <GlassTable
                 title="Latest Customers"
                 loading={loading}
                 rows={latestCustomers.map((c) => ({
                   c1: c.name ?? "-",
-                  c2: c.createdAt?.seconds ? format(new Date(c.createdAt.seconds * 1000), "yyyy-MM-dd") : "-",
+                  c2: c.createdAt?.seconds
+                    ? format(new Date(c.createdAt.seconds * 1000), "yyyy-MM-dd")
+                    : "-",
                   href: `/sales/customers/${c.id}`,
                 }))}
                 headers={["Name", "Created"]}
@@ -377,7 +411,9 @@ export default function DashboardPage() {
                 loading={loading}
                 rows={latestPackages.map((p) => ({
                   c1: p.name ?? "-",
-                  c2: p.createdAt?.seconds ? format(new Date(p.createdAt.seconds * 1000), "yyyy-MM-dd") : "-",
+                  c2: p.createdAt?.seconds
+                    ? format(new Date(p.createdAt.seconds * 1000), "yyyy-MM-dd")
+                    : "-",
                   href: `/sales/packages/${p.id}`,
                 }))}
                 headers={["Package", "Created"]}
@@ -387,7 +423,9 @@ export default function DashboardPage() {
                 loading={loading}
                 rows={latestSales.map((s) => ({
                   c1: s.id,
-                  c2: s.createdAt?.seconds ? format(new Date(s.createdAt.seconds * 1000), "yyyy-MM-dd") : "-",
+                  c2: s.createdAt?.seconds
+                    ? format(new Date(s.createdAt.seconds * 1000), "yyyy-MM-dd")
+                    : "-",
                   c3: typeof s.total === "number" ? formatCurrency(s.total) : "-",
                   href: `/sales/${s.id}`,
                 }))}
@@ -417,7 +455,7 @@ function StatCard({
   delta: number;
   href: string;
   icon: React.ReactNode;
-  accent: string; // tailwind color class
+  accent: string;
   miniData: MiniSeriesPoint[];
 }) {
   const isUp = delta >= 0;
@@ -427,8 +465,16 @@ function StatCard({
         <CardContent className="p-4">
           <div className="flex items-center justify-between">
             <div className={`p-2 rounded-xl text-white ${accent}`}>{icon}</div>
-            <div className={`flex items-center gap-1 text-sm ${isUp ? "text-emerald-600" : "text-rose-600"}`}>
-              {isUp ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+            <div
+              className={`flex items-center gap-1 text-sm ${
+                isUp ? "text-emerald-600" : "text-rose-600"
+              }`}
+            >
+              {isUp ? (
+                <ArrowUpRight className="w-4 h-4" />
+              ) : (
+                <ArrowDownRight className="w-4 h-4" />
+              )}
               <span>{Math.abs(delta).toFixed(1)}%</span>
             </div>
           </div>
@@ -438,7 +484,6 @@ function StatCard({
             <p className="text-2xl font-semibold leading-tight">{value}</p>
           </div>
 
-          {/* Mini chart */}
           <div className="mt-3 h-[48px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={miniData}>
@@ -490,7 +535,10 @@ function GlassTable({
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={headers.length} className="text-center text-muted-foreground py-8">
+                    <TableCell
+                      colSpan={headers.length}
+                      className="text-center text-muted-foreground py-8"
+                    >
                       No data
                     </TableCell>
                   </TableRow>
@@ -542,14 +590,20 @@ async function buildMiniSeries(
   coll: "customers" | "sales" | "packages",
   from: Date,
   to: Date,
-  sumTotals = false
+  sumTotals = false,
+  createdBy?: string
 ): Promise<MiniSeriesPoint[]> {
-  const q = query(
-    collection(db, coll),
+  const constraints: QueryConstraint[] = [
     where("createdAt", ">=", toTS(startOfDay(from))),
     where("createdAt", "<=", toTS(endOfDay(to))),
-    orderBy("createdAt", "asc")
-  );
+   orderBy("createdAt", "desc")
+  ];
+
+  if (createdBy) {
+    constraints.unshift(where("createdBy", "==", createdBy));
+  }
+
+  const q = query(collection(db, coll), ...constraints);
   const snap = await getDocs(q);
 
   const days = eachDayOfInterval({ start: startOfDay(from), end: startOfDay(to) });
@@ -560,6 +614,7 @@ async function buildMiniSeries(
     const dt = d.data().createdAt?.toDate?.() ?? new Date(d.data().createdAt);
     const key = format(startOfDay(dt), "MM-dd");
     if (!map.has(key)) map.set(key, 0);
+
     if (sumTotals) {
       const val = typeof d.data().total === "number" ? d.data().total : 0;
       map.set(key, safeNum(map.get(key)) + val);
@@ -606,7 +661,11 @@ function sumTotals(snap: any) {
 
 function formatCurrency(n: number) {
   try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 0,
+    }).format(n);
   } catch {
     return `${Math.round(n)}`;
   }
