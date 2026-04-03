@@ -53,7 +53,16 @@ const [customer, setCustomer] = useState({
   address: "",
   dob: "",
   notes: "",
+  customerType: "",
 });
+
+const CUSTOMER_TYPES = [
+  "Not Interested",
+  "Regular",
+  "Important",
+  "VIP",
+  "Complaint",
+];
 
 const NATIONALITIES = [
   "Saudi",
@@ -143,6 +152,7 @@ const NATIONALITIES = [
       ...customer,
       name: customer.name.trim(),
       phone: customer.phone.trim(),
+      customerType: customer.customerType.trim() || null,
       email: customer.email.trim() || null,
       nationality: customer.nationality.trim() || null,
       passportNo: customer.passportNo.trim() || null,
@@ -259,6 +269,9 @@ const NATIONALITIES = [
   </select>
 </div>
 
+
+
+
                       <div>
                         <Label className="my-2">Passport No.</Label>
                         <Input
@@ -276,7 +289,25 @@ const NATIONALITIES = [
                           onChange={(e) => handleCustomerChange("dob", e.target.value)}
                         />
                       </div>
+<div className="space-y-1">
+  <Label>Customer Type</Label>
 
+  <select
+    className="w-full h-10 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+    value={customer.customerType || ""}
+    onChange={(e) =>
+      handleCustomerChange("customerType", e.target.value)
+    }
+  >
+    <option value="">Select customer type</option>
+
+    {CUSTOMER_TYPES.map((type) => (
+      <option key={type} value={type}>
+        {type}
+      </option>
+    ))}
+  </select>
+</div>
                       <div className="sm:col-span-2 lg:col-span-3">
                         <Label className="my-2">Address</Label>
                         <Input

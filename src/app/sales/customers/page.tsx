@@ -257,12 +257,13 @@ export default function CustomersListPage() {
                           </Link>
 
                            <Link href={`/sales/customers/${c.id}/add-sale`}>
-                            <Button 
-                              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                     <Button
+  size="sm"
+  className="bg-emerald-600 hover:bg-emerald-700 text-white"
 
-                            size="icon">
-                              <Plus className="w-4 h-4" />
-                            </Button>
+>
+  + Add Sales
+</Button>
                           </Link>
 
 
