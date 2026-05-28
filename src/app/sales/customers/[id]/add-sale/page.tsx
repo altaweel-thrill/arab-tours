@@ -61,6 +61,19 @@ type ServiceItem = {
   qty: number;
   unitCost: number;
   cost: number;
+
+  // flight
+  from?: string;
+  to?: string;
+  provider?: string;
+
+  // hotel
+  hotelDays?: number;
+  hotelStars?: string;
+  hotelProvider?: string;
+  roomsCount?: number;
+
+  // visa
   visaId?: string | null;
   visaSnapshot?: {
     countryName?: string;
@@ -116,6 +129,16 @@ function newService(type: string = "Flight"): ServiceItem {
     qty: 1,
     unitCost: 0,
     cost: 0,
+
+    from: "",
+    to: "",
+    provider: "",
+
+    hotelDays: 1,
+    hotelStars: "",
+    hotelProvider: "",
+    roomsCount: 1,
+
     visaId: null,
     visaSnapshot: null,
   });
@@ -146,7 +169,7 @@ export default function AddSalesOrderPage() {
 
   const totals = useMemo(() => {
     const totalCost = services.reduce((a, s) => a + safeNum(s.cost), 0);
-  const remainingAmount = safeNum(fullAmount) - safeNum(paidAmount);
+    const remainingAmount = safeNum(fullAmount) - safeNum(paidAmount);
     const totalProfit = safeNum(fullAmount) - totalCost;
 
     return {
@@ -250,6 +273,19 @@ export default function AddSalesOrderPage() {
         current.visaSnapshot = null;
       }
 
+      if (newType !== "Flight") {
+        current.from = "";
+        current.to = "";
+        current.provider = "";
+      }
+
+      if (newType !== "Hotel") {
+        current.hotelDays = 1;
+        current.hotelStars = "";
+        current.hotelProvider = "";
+        current.roomsCount = 1;
+      }
+
       copy[index] = recalcLine(current);
       return copy;
     });
@@ -290,7 +326,7 @@ export default function AddSalesOrderPage() {
     });
   };
 
-  /* -------- File Upload (Drag & Drop) -------- */
+  /* -------- File Upload -------- */
 
   const mergeFiles = (incomingFiles: File[]) => {
     setPaymentFiles((prev) => {
@@ -347,9 +383,7 @@ export default function AddSalesOrderPage() {
     const uploaded: UploadedPaymentFile[] = [];
 
     for (const file of paymentFiles) {
-      const filePath = `salesOrders/${orderId}/payments/${Date.now()}-${
-        file.name
-      }`;
+      const filePath = `salesOrders/${orderId}/payments/${Date.now()}-${file.name}`;
       const fileRef = ref(storage, filePath);
 
       await uploadBytes(fileRef, file);
@@ -379,13 +413,37 @@ export default function AddSalesOrderPage() {
       return;
     }
 
-    if (safeNum(fullAmount) <= 0) {
-      toast.error("Please enter the full amount.");
+    const hasInvalidFlight = services.some(
+      (s) =>
+        s.type === "Flight" &&
+        (!s.from?.trim() ||
+          !s.to?.trim() ||
+          !s.provider?.trim() ||
+          safeNum(s.qty) <= 0 ||
+          safeNum(s.unitCost) <= 0)
+    );
+    if (hasInvalidFlight) {
+      toast.error("Please complete all flight fields.");
       return;
     }
 
-    if (safeNum(paidAmount) > safeNum(fullAmount)) {
-      toast.error("Paid amount cannot be greater than full amount.");
+    const hasInvalidHotel = services.some(
+      (s) =>
+        s.type === "Hotel" &&
+        (!safeNum(s.hotelDays) ||
+          !s.hotelStars?.trim() ||
+          !s.hotelProvider?.trim() ||
+          !safeNum(s.roomsCount) ||
+          safeNum(s.qty) <= 0 ||
+          safeNum(s.unitCost) <= 0)
+    );
+    if (hasInvalidHotel) {
+      toast.error("Please complete all hotel fields.");
+      return;
+    }
+
+    if (safeNum(fullAmount) <= 0) {
+      toast.error("Please enter the full amount.");
       return;
     }
 
@@ -421,6 +479,19 @@ export default function AddSalesOrderPage() {
           unitCost: s.unitCost,
           cost: s.cost,
 
+          // flight
+          from: s.type === "Flight" ? s.from?.trim() || null : null,
+          to: s.type === "Flight" ? s.to?.trim() || null : null,
+          provider: s.type === "Flight" ? s.provider?.trim() || null : null,
+
+          // hotel
+          hotelDays: s.type === "Hotel" ? safeNum(s.hotelDays) : null,
+          hotelStars: s.type === "Hotel" ? s.hotelStars?.trim() || null : null,
+          hotelProvider:
+            s.type === "Hotel" ? s.hotelProvider?.trim() || null : null,
+          roomsCount: s.type === "Hotel" ? safeNum(s.roomsCount) : null,
+
+          // visa
           visaId: s.type === "Visa" ? s.visaId ?? null : null,
           visaSnapshot: s.type === "Visa" ? s.visaSnapshot ?? null : null,
 
@@ -566,6 +637,110 @@ export default function AddSalesOrderPage() {
                               disabled
                               placeholder="Auto filled from catalog"
                             />
+                          </div>
+                        </div>
+                      ) : s.type === "Flight" ? (
+                        <div className="md:col-span-3 space-y-3">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div>
+                              <Label className="my-2">From</Label>
+                              <Input
+                                value={s.from || ""}
+                                onChange={(e) =>
+                                  updateService(i, { from: e.target.value })
+                                }
+                                placeholder="e.g. Riyadh"
+                              />
+                            </div>
+
+                            <div>
+                              <Label className="my-2">To</Label>
+                              <Input
+                                value={s.to || ""}
+                                onChange={(e) =>
+                                  updateService(i, { to: e.target.value })
+                                }
+                                placeholder="e.g. Cairo"
+                              />
+                            </div>
+
+                            <div>
+                              <Label className="my-2">Provider</Label>
+                              <Input
+                                value={s.provider || ""}
+                                onChange={(e) =>
+                                  updateService(i, { provider: e.target.value })
+                                }
+                                placeholder="e.g. Saudia"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ) : s.type === "Hotel" ? (
+                        <div className="md:col-span-3 space-y-3">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <Label className="my-2">Number of Days</Label>
+                              <Input
+                                type="number"
+                                min={1}
+                                value={s.hotelDays ?? 1}
+                                onChange={(e) =>
+                                  updateService(i, {
+                                    hotelDays: clampQty(e.target.value),
+                                  })
+                                }
+                              />
+                            </div>
+
+                            <div>
+                              <Label className="my-2">Hotel Stars</Label>
+                              <select
+                                className="w-full border rounded h-10 px-2 bg-background"
+                                value={s.hotelStars || ""}
+                                onChange={(e) =>
+                                  updateService(i, {
+                                    hotelStars: e.target.value,
+                                  })
+                                }
+                              >
+                                <option value="">Select stars</option>
+                                <option value="1 Star">1 Star</option>
+                                <option value="2 Stars">2 Stars</option>
+                                <option value="3 Stars">3 Stars</option>
+                                <option value="4 Stars">4 Stars</option>
+                                <option value="5 Stars">5 Stars</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <Label className="my-2">Provider</Label>
+                              <Input
+                                value={s.hotelProvider || ""}
+                                onChange={(e) =>
+                                  updateService(i, {
+                                    hotelProvider: e.target.value,
+                                  })
+                                }
+                                placeholder="e.g. Booking.com"
+                              />
+                            </div>
+
+                            <div>
+                              <Label className="my-2">Number of Rooms</Label>
+                              <Input
+                                type="number"
+                                min={1}
+                                value={s.roomsCount ?? 1}
+                                onChange={(e) =>
+                                  updateService(i, {
+                                    roomsCount: clampQty(e.target.value),
+                                  })
+                                }
+                              />
+                            </div>
                           </div>
                         </div>
                       ) : (
