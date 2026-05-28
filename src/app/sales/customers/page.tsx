@@ -6,7 +6,7 @@ import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { Eye, ArrowUpDown, Plus } from "lucide-react";
+import { Eye, ArrowUpDown } from "lucide-react";
 
 import { AppSidebar } from "@/components/app-sidebar";
 import {
@@ -47,6 +47,7 @@ type Customer = {
   nationality?: string;
   createdAt?: any;
   createdBy?: string;
+  coRegisters?: string[];
 };
 
 export default function CustomersListPage() {
@@ -66,16 +67,33 @@ export default function CustomersListPage() {
     if (!user) return;
 
     try {
-      const q = query(
+      setLoading(true);
+
+      const createdByQuery = query(
         collection(db, "customers"),
         where("createdBy", "==", user.uid)
       );
 
-      const snap = await getDocs(q);
-      const data = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      })) as Customer[];
+      const coRegisteredQuery = query(
+        collection(db, "customers"),
+        where("coRegisters", "array-contains", user.uid)
+      );
+
+      const [createdBySnap, coRegisteredSnap] = await Promise.all([
+        getDocs(createdByQuery),
+        getDocs(coRegisteredQuery),
+      ]);
+
+      const map = new Map<string, Customer>();
+
+      [...createdBySnap.docs, ...coRegisteredSnap.docs].forEach((d) => {
+        map.set(d.id, {
+          id: d.id,
+          ...d.data(),
+        } as Customer);
+      });
+
+      const data = Array.from(map.values());
 
       setCustomers(data);
     } catch (error) {
