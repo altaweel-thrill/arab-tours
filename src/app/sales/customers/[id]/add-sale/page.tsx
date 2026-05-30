@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   addDoc,
@@ -31,14 +31,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ThemeToggle } from "@/components/theme-toggle";
 import ProtectedRouteWithPrivilege from "@/components/auth/protected-route-with-privilege";
-import {
-  Plus,
-  Save,
-  ArrowLeft,
-  Trash2,
-  UploadCloud,
-  FileText,
-} from "lucide-react";
+import { Plus, Save, ArrowLeft, Trash2, FileText } from "lucide-react";
 import NotificationsBell from "@/components/notifications/NotificationsBell";
 
 /* ---------------- Types ---------------- */
@@ -61,6 +54,7 @@ type ServiceItem = {
   qty: number;
   unitCost: number;
   cost: number;
+  invoiceFile?: File | null;
 
   // flight
   from?: string;
@@ -91,10 +85,29 @@ type CustomerInfo = {
   nationality?: string;
 };
 
-type UploadedPaymentFile = {
+type UploadedFile = {
   name: string;
   url: string;
   path: string;
+};
+
+type PaymentMethod = {
+  id: string;
+  name: string;
+  percentageRate?: number;
+  fixedFee?: number;
+  currency?: "SAR";
+  isActive?: boolean;
+};
+
+type CustomerPayment = {
+  amount: number;
+  paymentMethodId: string;
+  paymentMethodName: string;
+  paymentMethodPercentageRate: number;
+  paymentMethodFixedFee: number;
+  note: string;
+  receiptFile: File | null;
 };
 
 /* ---------------- Helpers ---------------- */
@@ -108,6 +121,16 @@ function clampQty(n: any) {
 function safeNum(n: any) {
   const v = Number(n);
   return Number.isFinite(v) ? v : 0;
+}
+
+function calculatePaymentMethodFee(
+  amount: number,
+  percentageRate: number,
+  fixedFee: number
+) {
+  if (safeNum(amount) <= 0) return 0;
+  const fee = safeNum(amount) * (safeNum(percentageRate) / 100) + safeNum(fixedFee);
+  return Math.round(fee * 100) / 100;
 }
 
 function recalcLine(s: ServiceItem): ServiceItem {
@@ -129,6 +152,7 @@ function newService(type: string = "Flight"): ServiceItem {
     qty: 1,
     unitCost: 0,
     cost: 0,
+    invoiceFile: null,
 
     from: "",
     to: "",
@@ -149,7 +173,7 @@ function newService(type: string = "Flight"): ServiceItem {
 export default function AddSalesOrderPage() {
   const { id: customerId } = useParams();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
   const [customer, setCustomer] = useState<CustomerInfo>({});
   const [visas, setVisas] = useState<VisaCatalogItem[]>([]);
@@ -161,29 +185,38 @@ export default function AddSalesOrderPage() {
   ]);
 
   const [fullAmount, setFullAmount] = useState(0);
-  const [paidAmount, setPaidAmount] = useState(0);
-
-  const [paymentFiles, setPaymentFiles] = useState<File[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [payments, setPayments] = useState<CustomerPayment[]>([
+    {
+      amount: 0,
+      paymentMethodId: "",
+      paymentMethodName: "",
+      paymentMethodPercentageRate: 0,
+      paymentMethodFixedFee: 0,
+      note: "",
+      receiptFile: null,
+    },
+  ]);
 
   const totals = useMemo(() => {
     const totalCost = services.reduce((a, s) => a + safeNum(s.cost), 0);
+    const paidAmount = payments.reduce((a, p) => a + safeNum(p.amount), 0);
     const remainingAmount = safeNum(fullAmount) - safeNum(paidAmount);
     const totalProfit = safeNum(fullAmount) - totalCost;
 
     return {
       totalCost,
       totalPrice: safeNum(fullAmount),
+      paidAmount,
       totalProfit,
       remainingAmount,
     };
-  }, [services, fullAmount, paidAmount]);
+  }, [services, fullAmount, payments]);
 
   /* -------- Fetch customer -------- */
 
   useEffect(() => {
-    if (!customerId) return;
+    if (authLoading || !user || !customerId) return;
 
     (async () => {
       try {
@@ -201,11 +234,13 @@ export default function AddSalesOrderPage() {
         toast.error("Failed to load customer info");
       }
     })();
-  }, [customerId]);
+  }, [authLoading, customerId, user]);
 
   /* -------- Fetch visaCatalog -------- */
 
   useEffect(() => {
+    if (authLoading || !user) return;
+
     (async () => {
       try {
         setLoadingVisas(true);
@@ -237,7 +272,28 @@ export default function AddSalesOrderPage() {
         setLoadingVisas(false);
       }
     })();
-  }, []);
+  }, [authLoading, user]);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, "paymentMethods"));
+        const methods = snap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as any) })) as PaymentMethod[];
+
+        setPaymentMethods(
+          methods
+            .filter((method) => method.isActive !== false)
+            .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+        );
+      } catch (e) {
+        console.error(e);
+        toast.error("Failed to load payment methods");
+      }
+    })();
+  }, [authLoading, user]);
 
   /* -------- Handlers -------- */
 
@@ -326,77 +382,49 @@ export default function AddSalesOrderPage() {
     });
   };
 
-  /* -------- File Upload -------- */
+  const addPayment = () => {
+    setPayments((prev) => [
+      ...prev,
+      {
+        amount: 0,
+        paymentMethodId: "",
+        paymentMethodName: "",
+        paymentMethodPercentageRate: 0,
+        paymentMethodFixedFee: 0,
+        note: "",
+        receiptFile: null,
+      },
+    ]);
+  };
 
-  const mergeFiles = (incomingFiles: File[]) => {
-    setPaymentFiles((prev) => {
-      const all = [...prev, ...incomingFiles];
+  const updatePayment = (index: number, patch: Partial<CustomerPayment>) => {
+    setPayments((prev) =>
+      prev.map((payment, i) =>
+        i === index ? { ...payment, ...patch } : payment
+      )
+    );
+  };
 
-      const unique = all.filter(
-        (file, index, self) =>
-          index ===
-          self.findIndex(
-            (f) =>
-              f.name === file.name &&
-              f.size === file.size &&
-              f.lastModified === file.lastModified
-          )
-      );
-
-      return unique;
+  const removePayment = (index: number) => {
+    setPayments((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((_, i) => i !== index);
     });
   };
 
-  const onSelectFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    mergeFiles(files);
-  };
+  const uploadSingleFile = async (
+    file: File,
+    filePath: string
+  ): Promise<UploadedFile> => {
+    const fileRef = ref(storage, filePath);
+    await uploadBytes(fileRef, file);
+    const url = await getDownloadURL(fileRef);
 
-  const removePaymentFile = (index: number) => {
-    setPaymentFiles((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!isDragging) setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
-    const files = Array.from(e.dataTransfer.files || []);
-    if (files.length) mergeFiles(files);
-  };
-
-  const uploadPaymentFiles = async (orderId: string) => {
-    if (!paymentFiles.length) return [];
-
-    const uploaded: UploadedPaymentFile[] = [];
-
-    for (const file of paymentFiles) {
-      const filePath = `salesOrders/${orderId}/payments/${Date.now()}-${file.name}`;
-      const fileRef = ref(storage, filePath);
-
-      await uploadBytes(fileRef, file);
-      const url = await getDownloadURL(fileRef);
-
-      uploaded.push({
-        name: file.name,
-        url,
-        path: filePath,
-      });
-    }
-
-    return uploaded;
+    return {
+      name: file.name,
+      url,
+      path: filePath,
+    };
   };
 
   const saveOrder = async () => {
@@ -447,6 +475,24 @@ export default function AddSalesOrderPage() {
       return;
     }
 
+    if (totals.paidAmount > safeNum(fullAmount)) {
+      toast.error("Customer payments cannot exceed the full amount.");
+      return;
+    }
+
+    const enteredPayments = payments.filter((p) => safeNum(p.amount) > 0);
+    const missingPaymentMethods = enteredPayments.some((p) => !p.paymentMethodId);
+    if (missingPaymentMethods) {
+      toast.error("Please select a payment method for every customer payment.");
+      return;
+    }
+
+    const missingReceipts = enteredPayments.some((p) => !p.receiptFile);
+    if (missingReceipts) {
+      toast.error("Receipt upload is required for every customer payment.");
+      return;
+    }
+
     try {
       setSaving(true);
 
@@ -460,10 +506,9 @@ export default function AddSalesOrderPage() {
         totalProfit: totals.totalProfit,
 
         fullAmount: safeNum(fullAmount),
-        paidAmount: safeNum(paidAmount),
+        paidAmount: totals.paidAmount,
         remainingAmount: totals.remainingAmount,
-
-        paymentFiles: [],
+        paymentsCount: enteredPayments.length,
 
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -472,7 +517,7 @@ export default function AddSalesOrderPage() {
       for (const raw of services) {
         const s = recalcLine(raw);
 
-        await addDoc(collection(db, "salesOrders", orderRef.id, "services"), {
+        const serviceRef = await addDoc(collection(db, "salesOrders", orderRef.id, "services"), {
           type: s.type,
           description: s.description || "",
           qty: s.qty,
@@ -494,18 +539,119 @@ export default function AddSalesOrderPage() {
           // visa
           visaId: s.type === "Visa" ? s.visaId ?? null : null,
           visaSnapshot: s.type === "Visa" ? s.visaSnapshot ?? null : null,
+          invoiceFile: null,
 
           createdAt: serverTimestamp(),
         });
+
+        let invoiceFile: UploadedFile | null = null;
+        if (s.invoiceFile) {
+          invoiceFile = await uploadSingleFile(
+            s.invoiceFile,
+            `salesOrders/${orderRef.id}/services/${serviceRef.id}/invoice/${Date.now()}-${s.invoiceFile.name}`
+          );
+          await updateDoc(serviceRef, {
+            invoiceFile,
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        await addDoc(collection(db, "accountingEntries"), {
+          orderId: orderRef.id,
+          customerId,
+          direction: "out",
+          sourceType: "service_cost",
+          amount: s.cost,
+          currency: "SAR",
+          description: s.description || `${s.type} service cost`,
+          file: invoiceFile,
+          status: "pending",
+          createdBy: user?.uid || null,
+          createdAt: serverTimestamp(),
+          confirmedBy: null,
+          confirmedAt: null,
+          serviceId: serviceRef.id,
+        });
       }
 
-      const uploadedFiles = await uploadPaymentFiles(orderRef.id);
+      for (const payment of enteredPayments) {
+        const paymentMethodFeeAmount = calculatePaymentMethodFee(
+          safeNum(payment.amount),
+          payment.paymentMethodPercentageRate,
+          payment.paymentMethodFixedFee
+        );
 
-      if (uploadedFiles.length > 0) {
-        await updateDoc(doc(db, "salesOrders", orderRef.id), {
-          paymentFiles: uploadedFiles,
+        const paymentRef = await addDoc(
+          collection(db, "salesOrders", orderRef.id, "payments"),
+          {
+            amount: safeNum(payment.amount),
+            paymentMethodId: payment.paymentMethodId,
+            paymentMethodName: payment.paymentMethodName,
+            paymentMethodPercentageRate: payment.paymentMethodPercentageRate,
+            paymentMethodFixedFee: payment.paymentMethodFixedFee,
+            paymentMethodFeeAmount,
+            note: payment.note.trim(),
+            receiptFile: null,
+            createdBy: user?.uid || null,
+            createdAt: serverTimestamp(),
+          }
+        );
+
+        const receiptFile = await uploadSingleFile(
+          payment.receiptFile as File,
+          `salesOrders/${orderRef.id}/payments/${paymentRef.id}/receipt/${Date.now()}-${payment.receiptFile?.name}`
+        );
+
+        await updateDoc(paymentRef, {
+          receiptFile,
           updatedAt: serverTimestamp(),
         });
+
+        await addDoc(collection(db, "accountingEntries"), {
+          orderId: orderRef.id,
+          customerId,
+          direction: "in",
+          sourceType: "customer_payment",
+          amount: safeNum(payment.amount),
+          currency: "SAR",
+          paymentMethodId: payment.paymentMethodId,
+          paymentMethodName: payment.paymentMethodName,
+          paymentMethodPercentageRate: payment.paymentMethodPercentageRate,
+          paymentMethodFixedFee: payment.paymentMethodFixedFee,
+          paymentMethodFeeAmount,
+          description: payment.note.trim() || "Customer payment",
+          file: receiptFile,
+          status: "pending",
+          createdBy: user?.uid || null,
+          createdAt: serverTimestamp(),
+          confirmedBy: null,
+          confirmedAt: null,
+          paymentId: paymentRef.id,
+        });
+
+        if (paymentMethodFeeAmount > 0) {
+          await addDoc(collection(db, "accountingEntries"), {
+            orderId: orderRef.id,
+            customerId,
+            direction: "out",
+            sourceType: "payment_method_fee",
+            amount: paymentMethodFeeAmount,
+            currency: "SAR",
+            paymentMethodId: payment.paymentMethodId,
+            paymentMethodName: payment.paymentMethodName,
+            paymentMethodPercentageRate: payment.paymentMethodPercentageRate,
+            paymentMethodFixedFee: payment.paymentMethodFixedFee,
+            paymentMethodFeeAmount,
+            description: `Payment method fee - ${payment.paymentMethodName}`,
+            file: receiptFile,
+            status: "pending",
+            createdBy: user?.uid || null,
+            createdAt: serverTimestamp(),
+            confirmedBy: null,
+            confirmedAt: null,
+            paymentId: paymentRef.id,
+          });
+        }
       }
 
       toast.success("Sales order created successfully");
@@ -798,6 +944,26 @@ export default function AddSalesOrderPage() {
                           </span>
                         </div>
                       </div>
+
+                      <div className="md:col-span-5">
+                        <Label className="my-2">Service Invoice (optional)</Label>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <Input
+                            type="file"
+                            onChange={(e) =>
+                              updateService(i, {
+                                invoiceFile: e.target.files?.[0] ?? null,
+                              })
+                            }
+                          />
+                          {s.invoiceFile && (
+                            <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+                              <FileText className="w-4 h-4 shrink-0" />
+                              <span className="truncate">{s.invoiceFile.name}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -808,32 +974,23 @@ export default function AddSalesOrderPage() {
 
                 <Separator />
 
-                {/* Payment Summary */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 font-medium">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 font-medium">
                   <div>Total Cost: {totals.totalCost} SAR</div>
                   <div>Full Amount: {totals.totalPrice} SAR</div>
+                  <div>Paid: {totals.paidAmount} SAR</div>
                   <div className="text-emerald-600">
                     Profit: {totals.totalProfit} SAR
                   </div>
                   <div>Remaining: {totals.remainingAmount} SAR</div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label className="my-2">Full Amount</Label>
                     <Input
                       type="number"
                       value={fullAmount}
                       onChange={(e) => setFullAmount(safeNum(e.target.value))}
-                    />
-                  </div>
-
-                  <div>
-                    <Label className="my-2">Paid Amount</Label>
-                    <Input
-                      type="number"
-                      value={paidAmount}
-                      onChange={(e) => setPaidAmount(safeNum(e.target.value))}
                     />
                   </div>
 
@@ -845,66 +1002,131 @@ export default function AddSalesOrderPage() {
 
                 <Separator />
 
-                {/* Payment Files - Drag & Drop */}
                 <div className="space-y-3">
-                  <Label className="my-2 block">Upload Payment Files</Label>
-
-                  <div
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`cursor-pointer rounded-xl border-2 border-dashed p-6 text-center transition ${
-                      isDragging
-                        ? "border-primary bg-primary/5"
-                        : "border-muted-foreground/25 hover:border-primary/50"
-                    }`}
-                  >
-                    <div className="flex flex-col items-center gap-3">
-                      <UploadCloud className="w-8 h-8 text-muted-foreground" />
-                      <div className="space-y-1">
-                        <p className="font-medium">
-                          Drag and drop files here
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          or click to browse files
-                        </p>
-                      </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold">Customer Payments</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Each payment creates a pending accounting in entry.
+                      </p>
                     </div>
-
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={onSelectFiles}
-                    />
+                    <Button type="button" variant="outline" onClick={addPayment}>
+                      <Plus className="w-4 h-4 mr-1" /> Add Payment
+                    </Button>
                   </div>
 
-                  {paymentFiles.length > 0 && (
-                    <div className="space-y-2">
-                      {paymentFiles.map((file, index) => (
-                        <div
-                          key={`${file.name}-${index}`}
-                          className="flex items-center justify-between rounded-lg border p-3"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <FileText className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-sm truncate">{file.name}</span>
-                          </div>
+                  <div className="space-y-3">
+                    {payments.map((payment, index) => (
+                      <div
+                        key={index}
+                        className="grid grid-cols-1 gap-3 rounded-lg border p-3 md:grid-cols-[1fr_1fr_1fr_1.2fr_auto]"
+                      >
+                        <div>
+                          <Label className="my-2">Amount (SAR)</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            value={payment.amount}
+                            onChange={(e) =>
+                              updatePayment(index, {
+                                amount: safeNum(e.target.value),
+                              })
+                            }
+                          />
+                        </div>
 
+                        <div>
+                          <Label className="my-2">Payment Method</Label>
+                          <select
+                            className="h-10 w-full rounded border bg-background px-2"
+                            value={payment.paymentMethodId}
+                            onChange={(e) => {
+                              const selected = paymentMethods.find(
+                                (method) => method.id === e.target.value
+                              );
+                              updatePayment(index, {
+                                paymentMethodId: selected?.id || "",
+                                paymentMethodName: selected?.name || "",
+                                paymentMethodPercentageRate: safeNum(
+                                  selected?.percentageRate
+                                ),
+                                paymentMethodFixedFee: safeNum(selected?.fixedFee),
+                              });
+                            }}
+                          >
+                            <option value="">
+                              {paymentMethods.length
+                                ? "Select method"
+                                : "No methods available"}
+                            </option>
+                            {paymentMethods.map((method) => (
+                              <option key={method.id} value={method.id}>
+                                {method.name}
+                              </option>
+                            ))}
+                          </select>
+                          {payment.amount > 0 && !payment.paymentMethodId && (
+                            <p className="mt-1 text-xs text-destructive">
+                              Payment method is required.
+                            </p>
+                          )}
+                          {payment.paymentMethodId && (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Fee:{" "}
+                              {calculatePaymentMethodFee(
+                                payment.amount,
+                                payment.paymentMethodPercentageRate,
+                                payment.paymentMethodFixedFee
+                              )}{" "}
+                              SAR ({payment.paymentMethodPercentageRate}% +{" "}
+                              {payment.paymentMethodFixedFee} SAR)
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <Label className="my-2">Note</Label>
+                          <Input
+                            value={payment.note}
+                            onChange={(e) =>
+                              updatePayment(index, { note: e.target.value })
+                            }
+                            placeholder="Customer payment"
+                          />
+                        </div>
+
+                        <div>
+                          <Label className="my-2">Receipt</Label>
+                          <Input
+                            type="file"
+                            onChange={(e) =>
+                              updatePayment(index, {
+                                receiptFile: e.target.files?.[0] ?? null,
+                              })
+                            }
+                          />
+                          {payment.amount > 0 && !payment.receiptFile && (
+                            <p className="mt-1 text-xs text-destructive">
+                              Receipt is required for this payment.
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-end justify-end">
                           <Button
                             type="button"
                             variant="destructive"
                             size="icon"
-                            onClick={() => removePaymentFile(index)}
+                            onClick={() => removePayment(index)}
+                            disabled={payments.length <= 1}
+                            title="Remove payment"
                           >
                             <Trash2 className="w-4 h-4" />
                           </Button>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="flex justify-end gap-3">

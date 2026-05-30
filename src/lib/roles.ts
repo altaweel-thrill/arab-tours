@@ -1,5 +1,3 @@
-import { set } from "date-fns";
-
 export const rolePrivileges = {
   admin: {
     "employees.view": true,
@@ -27,6 +25,8 @@ export const rolePrivileges = {
     "management.sales-view": true,
     "visa.manage": true,
     "operations.view": true,
+    "accounting.view": true,
+    "accounting.confirm": true,
 
    
   },
@@ -50,6 +50,8 @@ export const rolePrivileges = {
     "settings.privileges": false,
     "employees.edit": false,
    "management.customers-view": false,
+   "accounting.view": false,
+   "accounting.confirm": false,
 },
   salesManager: {
     "sales.view": true,
@@ -60,6 +62,8 @@ export const rolePrivileges = {
     "employees.edit": false,
     "customers.add": true,
     "customers.view": true,
+    "accounting.view": false,
+    "accounting.confirm": false,
          "management.customers-view": false,
 
   },
@@ -77,8 +81,28 @@ export const rolePrivileges = {
     "sales.report": false,
     "settings.privileges": false,
     "employees.edit": true,
+    "accounting.view": false,
+    "accounting.confirm": false,
          "management.customers-view": false,
 
+  },
+  accountant: {
+    "employees.view": false,
+    "employees.add": false,
+    "employees.delete": false,
+    "departments.manage": false,
+    "reports.view": true,
+    "settings.update": false,
+
+    "sales.view": false,
+    "sales.add": false,
+    "sales.update": false,
+    "sales.report": false,
+    "settings.privileges": false,
+    "employees.edit": false,
+    "management.customers-view": false,
+    "accounting.view": true,
+    "accounting.confirm": true,
   },
   employee: {
     "employees.view": true,
@@ -94,6 +118,8 @@ export const rolePrivileges = {
     "sales.report": false,
     "settings.privileges": false,
     "employees.edit": false,
+    "accounting.view": false,
+    "accounting.confirm": false,
          "management.customers-view": false,
 
   },

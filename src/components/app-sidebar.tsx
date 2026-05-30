@@ -5,6 +5,7 @@ import {
   AudioWaveform,
   BarChart,
   BookOpen,
+  Calculator,
   Frame,
   GalleryVerticalEnd,
   Map,
@@ -89,15 +90,28 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       requiredPrivilege: "sales.view",
     },
     { title: "Customers", url: "/sales/customers", requiredPrivilege: "customers.view" },
-        {
-      title: "Add Order",
-      url: "/sales/add",
-      requiredPrivilege: "sales.add",
-    },
     {
       title: "Reports",
       url: "/sales/reports",
       requiredPrivilege: "sales.report",
+    },
+  ],
+},
+{
+  title: "Accounting",
+  url: "/accounting",
+  icon: Calculator,
+  requiredPrivilege: "accounting.view",
+  items: [
+    {
+      title: "Entries",
+      url: "/accounting",
+      requiredPrivilege: "accounting.view",
+    },
+    {
+      title: "Payment Methods",
+      url: "/accounting/payment-methods",
+      requiredPrivilege: "accounting.confirm",
     },
   ],
 },

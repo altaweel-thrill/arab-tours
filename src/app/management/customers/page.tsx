@@ -37,6 +37,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ThemeToggle } from "@/components/theme-toggle";
 import ProtectedRouteWithPrivilege from "@/components/auth/protected-route-with-privilege";
 import NotificationsBell from "@/components/notifications/NotificationsBell";
@@ -52,9 +58,31 @@ type Customer = {
   nationality?: string;
   createdAt?: any;
   createdBy?: string;
+  coRegisters?: string[];
 };
 
-type UserMap = Record<string, string>;
+type UserInfo = {
+  name: string;
+  email?: string;
+  photoURL?: string;
+};
+
+type UserMap = Record<string, UserInfo>;
+
+function getInitials(name?: string) {
+  const words = (name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (words.length === 0) return "U";
+
+  return words
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
+}
 
 /* ---------------- Component ---------------- */
 
@@ -86,7 +114,12 @@ export default function CustomersWithCreatorPage() {
       const usersSnap = await getDocs(collection(db, "users"));
       const map: UserMap = {};
       usersSnap.docs.forEach((d) => {
-        map[d.id] = d.data()?.name || d.data()?.email || "—";
+        const data = d.data();
+        map[d.id] = {
+          name: data?.name || data?.email || "—",
+          email: data?.email,
+          photoURL: data?.photoURL,
+        };
       });
       setUsersMap(map);
     } catch (err) {
@@ -112,7 +145,13 @@ export default function CustomersWithCreatorPage() {
 
     if (s) {
       list = list.filter((c) =>
-        `${c.name} ${c.phone} ${c.email ?? ""} ${usersMap[c.createdBy ?? ""] ?? ""}`
+        `${c.name} ${c.phone} ${c.email ?? ""} ${
+          usersMap[c.createdBy ?? ""]?.name ?? ""
+        } ${
+          c.coRegisters
+            ?.map((uid) => usersMap[uid]?.name ?? "")
+            .join(" ") ?? ""
+        }`
           .toLowerCase()
           .includes(s)
       );
@@ -122,12 +161,12 @@ export default function CustomersWithCreatorPage() {
       list.sort((a: any, b: any) => {
         const v1 =
           sortBy === "createdByName"
-            ? usersMap[a.createdBy ?? ""] ?? ""
+            ? usersMap[a.createdBy ?? ""]?.name ?? ""
             : a[sortBy] ?? "";
 
         const v2 =
           sortBy === "createdByName"
-            ? usersMap[b.createdBy ?? ""] ?? ""
+            ? usersMap[b.createdBy ?? ""]?.name ?? ""
             : b[sortBy] ?? "";
 
         if (v1 < v2) return sortDir === "asc" ? -1 : 1;
@@ -188,6 +227,7 @@ export default function CustomersWithCreatorPage() {
                     <TableHead>Phone</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Nationality</TableHead>
+                    <TableHead>Co-registers</TableHead>
 
                     <TableHead
                       onClick={() => handleSort("createdByName")}
@@ -210,13 +250,13 @@ export default function CustomersWithCreatorPage() {
                 <TableBody>
                   {loading ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-10">
+                      <TableCell colSpan={8} className="text-center py-10">
                         Loading...
                       </TableCell>
                     </TableRow>
                   ) : filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-10">
+                      <TableCell colSpan={8} className="text-center py-10">
                         No customers found
                       </TableCell>
                     </TableRow>
@@ -228,7 +268,13 @@ export default function CustomersWithCreatorPage() {
                         <TableCell>{c.email || "-"}</TableCell>
                         <TableCell>{c.nationality || "-"}</TableCell>
                         <TableCell>
-                          {usersMap[c.createdBy ?? ""] || "—"}
+                          <CoRegisterAvatars
+                            userIds={c.coRegisters ?? []}
+                            usersMap={usersMap}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          {usersMap[c.createdBy ?? ""]?.name || "—"}
                         </TableCell>
                         <TableCell>
                           {c.createdAt?.seconds
@@ -259,5 +305,62 @@ export default function CustomersWithCreatorPage() {
         </SidebarInset>
       </SidebarProvider>
     </ProtectedRouteWithPrivilege>
+  );
+}
+
+function CoRegisterAvatars({
+  userIds,
+  usersMap,
+}: {
+  userIds: string[];
+  usersMap: UserMap;
+}) {
+  const visibleUsers = userIds
+    .map((uid) => ({
+      uid,
+      user: usersMap[uid],
+    }))
+    .filter(({ user }) => Boolean(user));
+
+  if (visibleUsers.length === 0) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+
+  return (
+    <div className="flex items-center -space-x-2">
+      {visibleUsers.slice(0, 4).map(({ uid, user }) => (
+        <Tooltip key={uid}>
+          <TooltipTrigger asChild>
+            <Avatar className="h-8 w-8 border-2 border-background">
+              <AvatarImage src={user.photoURL || ""} alt={user.name} />
+              <AvatarFallback className="text-xs">
+                {getInitials(user.name)}
+              </AvatarFallback>
+            </Avatar>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={6}>
+            <p>{user.name}</p>
+          </TooltipContent>
+        </Tooltip>
+      ))}
+
+      {visibleUsers.length > 4 && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-background bg-muted text-xs font-medium">
+              +{visibleUsers.length - 4}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={6}>
+            <p>
+              {visibleUsers
+                .slice(4)
+                .map(({ user }) => user.name)
+                .join(", ")}
+            </p>
+          </TooltipContent>
+        </Tooltip>
+      )}
+    </div>
   );
 }

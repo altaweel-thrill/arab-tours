@@ -4,6 +4,7 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { createContext, useContext, useEffect, useState } from "react";
 import { auth, db } from "@/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
+import { rolePrivileges } from "@/lib/roles";
 
 type AuthContextType = {
   user: User | null;
@@ -34,8 +35,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
           if (userDoc.exists()) {
             const data = userDoc.data();
-            setRole(data.role || null);
-            setPrivileges(data.privileges || {});
+            const userRole = data.role || null;
+            const defaults =
+              userRole && userRole in rolePrivileges
+                ? rolePrivileges[userRole as keyof typeof rolePrivileges]
+                : {};
+
+            setRole(userRole);
+            setPrivileges({ ...defaults, ...(data.privileges || {}) });
           }
         } catch (err) {
           console.error("Error loading privileges:", err);
