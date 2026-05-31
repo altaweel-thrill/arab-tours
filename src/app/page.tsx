@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   collection,
+  doc,
+  getDoc,
   getDocs,
   getCountFromServer,
   query,
@@ -49,13 +51,13 @@ import { LoadingProgress } from "@/components/loading-progrss";
 import {
   Users,
   Briefcase,
-  Package,
   DollarSign,
   ArrowUpRight,
   ArrowDownRight,
   CalendarDays,
   ClipboardList,
   Plus,
+  Target,
   TrendingUp,
 } from "lucide-react";
 
@@ -126,19 +128,18 @@ export default function DashboardPage() {
   // cards
   const [customersCount, setCustomersCount] = useState(0);
   const [salesCount, setSalesCount] = useState(0);
-  const [packagesCount, setPackagesCount] = useState(0);
   const [revenue, setRevenue] = useState(0);
+  const [targetAmount, setTargetAmount] = useState(0);
+  const [monthlySales, setMonthlySales] = useState(0);
 
   // deltas (month-over-month)
   const [customersDelta, setCustomersDelta] = useState(0);
   const [salesDelta, setSalesDelta] = useState(0);
-  const [packagesDelta, setPackagesDelta] = useState(0);
   const [revenueDelta, setRevenueDelta] = useState(0);
 
   // mini charts (last 7 days)
   const [miniCustomers, setMiniCustomers] = useState<MiniSeriesPoint[]>([]);
   const [miniSales, setMiniSales] = useState<MiniSeriesPoint[]>([]);
-  const [miniPackages, setMiniPackages] = useState<MiniSeriesPoint[]>([]);
   const [miniRevenue, setMiniRevenue] = useState<MiniSeriesPoint[]>([]);
 
   // main 30-day sales chart
@@ -146,7 +147,6 @@ export default function DashboardPage() {
 
   // latest lists
   const [latestCustomers, setLatestCustomers] = useState<SimpleDoc[]>([]);
-  const [latestPackages, setLatestPackages] = useState<SimpleDoc[]>([]);
   const [latestSales, setLatestSales] = useState<SimpleDoc[]>([]);
 
   useEffect(() => {
@@ -170,10 +170,6 @@ export default function DashboardPage() {
           )
         );
 
-        const packagesCountSnap = await getCountFromServer(
-          query(collection(db, "packages"))
-        );
-
         const salesOrdersSnap = await getDocs(
           query(
             collection(db, "salesOrders"),
@@ -187,7 +183,6 @@ export default function DashboardPage() {
         })) as SimpleDoc[];
 
         setCustomersCount(customersCountSnap.data().count);
-        setPackagesCount(packagesCountSnap.data().count);
         setSalesCount(salesOrders.length);
 
         // ---------- Revenue ----------
@@ -196,6 +191,14 @@ export default function DashboardPage() {
           0
         );
         setRevenue(revenueSum);
+
+        const currentMonthKey = format(now, "yyyy-MM");
+        const targetSnap = await getDoc(
+          doc(db, "salesCommissionPlans", `${user.uid}_${currentMonthKey}`)
+        );
+        setTargetAmount(
+          targetSnap.exists() ? safeNum(targetSnap.data().targetAmount) : 0
+        );
 
         // ---------- Month-over-month deltas ----------
         const custThisMonthSnap = await getCountFromServer(
@@ -228,25 +231,9 @@ export default function DashboardPage() {
           percentDelta(salesThisMonth.length, salesPrevMonth.length)
         );
 
-        const pkgThisMonthSnap = await getCountFromServer(
-          query(collection(db, "packages"), where("createdAt", ">=", toTS(thisMonthStart)))
-        );
-        const pkgPrevMonthSnap = await getCountFromServer(
-          query(
-            collection(db, "packages"),
-            where("createdAt", ">=", toTS(prevMonthStart)),
-            where("createdAt", "<=", toTS(prevMonthEnd))
-          )
-        );
-        setPackagesDelta(
-          percentDelta(
-            pkgThisMonthSnap.data().count,
-            pkgPrevMonthSnap.data().count
-          )
-        );
-
         const revThis = sumOrders(salesThisMonth);
         const revPrev = sumOrders(salesPrevMonth);
+        setMonthlySales(revThis);
         setRevenueDelta(percentDelta(revThis, revPrev));
 
         // ---------- Mini charts ----------
@@ -254,7 +241,6 @@ export default function DashboardPage() {
           await buildMiniSeries("customers", day7Ago, now, false, user.uid)
         );
         setMiniSales(buildMiniSeriesFromDocs(salesOrders, day7Ago, now));
-        setMiniPackages(await buildMiniSeries("packages", day7Ago, now));
         setMiniRevenue(buildMiniSeriesFromDocs(salesOrders, day7Ago, now, true));
 
         // ---------- 30-day Sales line chart ----------
@@ -277,13 +263,6 @@ export default function DashboardPage() {
             .slice(0, 5)
         );
 
-        const latestPkgSnap = await getDocs(
-          query(collection(db, "packages"), orderBy("createdAt", "desc"), limit(5))
-        );
-        setLatestPackages(
-          latestPkgSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as SimpleDoc[]
-        );
-
         setLatestSales(
           salesOrders
             .slice()
@@ -302,6 +281,10 @@ export default function DashboardPage() {
   if (authLoading || shouldShowAccounting) {
     return <LoadingProgress />;
   }
+
+  const targetProgress = targetAmount
+    ? Math.min(100, Math.round((monthlySales / targetAmount) * 100))
+    : 0;
 
   return (
     <ProtectedRouteWithPrivilege>
@@ -337,7 +320,7 @@ export default function DashboardPage() {
                     Sales Dashboard
                   </h1>
                   <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                    Track customers, sales orders, packages, and revenue from one place.
+                    Track customers, sales orders, target progress, and revenue from one place.
                   </p>
                 </div>
 
@@ -386,13 +369,13 @@ export default function DashboardPage() {
                     miniData={miniSales}
                   />
                   <StatCard
-                    title="Packages"
-                    value={packagesCount}
-                    delta={packagesDelta}
-                    href="/operations/packages"
-                    icon={<Package className="w-6 h-6" />}
-                    accent="bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300"
-                    miniData={miniPackages}
+                    title="Target"
+                    value={targetAmount ? `${targetProgress}%` : "No target"}
+                    delta={0}
+                    href="/sales/target"
+                    icon={<Target className="w-6 h-6" />}
+                    accent="bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                    miniData={miniRevenue}
                   />
                   <StatCard
                     title="Revenue"
@@ -467,7 +450,11 @@ export default function DashboardPage() {
                   <CardContent className="space-y-3 p-4">
                     <FocusRow label="Customers" value={customersCount} href="/sales/customers" />
                     <FocusRow label="Sales Orders" value={salesCount} href="/sales" />
-                    <FocusRow label="Packages" value={packagesCount} href="/operations/packages" />
+                    <FocusRow
+                      label="Target"
+                      value={targetAmount ? `${targetProgress}%` : "Not set"}
+                      href="/sales/target"
+                    />
                   </CardContent>
                 </Card>
               </div>
@@ -486,16 +473,26 @@ export default function DashboardPage() {
                   headers={["Name", "Created"]}
                 />
                 <GlassTable
-                  title="Latest Packages"
+                  title="Target Status"
                   loading={loading}
-                  rows={latestPackages.map((p) => ({
-                    c1: p.name ?? "-",
-                    c2: p.createdAt?.seconds
-                      ? format(new Date(p.createdAt.seconds * 1000), "yyyy-MM-dd")
-                      : "-",
-                    href: "/operations/packages",
-                  }))}
-                  headers={["Package", "Created"]}
+                  rows={[
+                    {
+                      c1: "Monthly Target",
+                      c2: targetAmount ? formatCurrency(targetAmount) : "Not set",
+                      href: "/sales/target",
+                    },
+                    {
+                      c1: "Month Sales",
+                      c2: formatCurrency(monthlySales),
+                      href: "/sales",
+                    },
+                    {
+                      c1: "Progress",
+                      c2: targetAmount ? `${targetProgress}%` : "0%",
+                      href: "/sales/target",
+                    },
+                  ]}
+                  headers={["Metric", "Value"]}
                 />
                 <GlassTable
                   title="Latest Sales"
