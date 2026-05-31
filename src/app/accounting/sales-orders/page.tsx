@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   collection,
   doc,
@@ -10,33 +10,26 @@ import {
   setDoc,
   updateDoc,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import { toast } from "sonner";
 import { format } from "date-fns";
 import {
   ArrowDownLeft,
   ArrowUpRight,
-  Banknote,
   CheckCircle2,
+  ClipboardList,
   Clock3,
   ExternalLink,
   FileWarning,
-  Filter,
   Paperclip,
   ReceiptText,
-  TrendingDown,
-  TrendingUp,
 } from "lucide-react";
+import { toast } from "sonner";
 
+import ProtectedRouteWithPrivilege from "@/components/auth/protected-route-with-privilege";
 import { AppSidebar } from "@/components/app-sidebar";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -44,12 +37,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { ThemeToggle } from "@/components/theme-toggle";
-import ProtectedRouteWithPrivilege from "@/components/auth/protected-route-with-privilege";
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 import { useAuth } from "@/context/AuthContext";
+import { db } from "@/lib/firebase";
 import { usePrivilege } from "@/hooks/usePrivilege";
+
+type UploadedFile = {
+  name?: string;
+  url?: string;
+  path?: string;
+} | null;
 
 type AccountingEntry = {
   id: string;
@@ -66,11 +67,7 @@ type AccountingEntry = {
   paymentMethodFixedFee?: number;
   paymentMethodFeeAmount?: number;
   description: string;
-  file?: {
-    name: string;
-    url: string;
-    path: string;
-  } | null;
+  file?: UploadedFile;
   status: "pending" | "confirmed";
   createdBy?: string | null;
   createdAt?: any;
@@ -96,23 +93,6 @@ type OrderMap = Record<
     createdAt?: any;
   }
 >;
-type UploadedFile = {
-  name?: string;
-  url?: string;
-  path?: string;
-} | null;
-
-type OrderSummary = {
-  id: string;
-  orderNumber?: string;
-  status?: string;
-  totalCost?: number;
-  totalPrice?: number;
-  totalProfit?: number;
-  fullAmount?: number;
-  paidAmount?: number;
-  remainingAmount?: number;
-};
 
 type OrderService = {
   id: string;
@@ -132,7 +112,8 @@ type OrderPayment = {
 };
 
 type OrderDetails = {
-  order: OrderSummary;
+  order: OrderMap[string] & { id: string };
+  accountingEntries: AccountingEntry[];
   services: OrderService[];
   payments: OrderPayment[];
 };
@@ -147,38 +128,6 @@ function toDate(value: any): Date | null {
   if (typeof value.toDate === "function") return value.toDate();
   if (value instanceof Date) return value;
   return null;
-}
-
-function dateInputValue(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function entryDateValue(value: any) {
-  const date = toDate(value);
-  return date ? dateInputValue(date) : "";
-}
-
-function todayRange() {
-  const today = new Date();
-  const value = dateInputValue(today);
-  return { from: value, to: value };
-}
-
-function thisMonthRange() {
-  const now = new Date();
-  const from = new Date(now.getFullYear(), now.getMonth(), 1);
-  const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  return { from: dateInputValue(from), to: dateInputValue(to) };
-}
-
-function previousMonthRange() {
-  const now = new Date();
-  const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const to = new Date(now.getFullYear(), now.getMonth(), 0);
-  return { from: dateInputValue(from), to: dateInputValue(to) };
 }
 
 function displayDate(value: any) {
@@ -202,11 +151,20 @@ function sourceLabel(sourceType: AccountingEntry["sourceType"]) {
   return labels[sourceType] || sourceType.split("_").join(" ");
 }
 
+function compactStatusLabel(status?: string) {
+  if (!status) return "-";
+  return status
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function hasAttachment(file: UploadedFile) {
   return Boolean(file?.url);
 }
 
-export default function AccountingPage() {
+export default function AccountingSalesOrdersPage() {
   const { user, loading: authLoading, privileges } = useAuth();
   const canView = privileges?.["accounting.view"] ?? false;
   const canConfirm = usePrivilege("accounting.confirm");
@@ -217,12 +175,6 @@ export default function AccountingPage() {
   const [orders, setOrders] = useState<OrderMap>({});
   const [loading, setLoading] = useState(true);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [directionFilter, setDirectionFilter] = useState("all");
-  const [datePreset, setDatePreset] = useState("today");
-  const [dateFrom, setDateFrom] = useState(() => todayRange().from);
-  const [dateTo, setDateTo] = useState(() => todayRange().to);
-  const [employeeFilter, setEmployeeFilter] = useState("all");
   const [orderDialogOpen, setOrderDialogOpen] = useState(false);
   const [orderDetails, setOrderDetails] = useState<OrderDetails | null>(null);
   const [loadingOrderDetails, setLoadingOrderDetails] = useState(false);
@@ -237,12 +189,13 @@ export default function AccountingPage() {
 
       try {
         setLoading(true);
-        const [entriesSnap, usersSnap, customersSnap, ordersSnap] = await Promise.all([
-          getDocs(collection(db, "accountingEntries")),
-          getDocs(collection(db, "users")),
-          getDocs(collection(db, "customers")),
-          getDocs(collection(db, "salesOrders")),
-        ]);
+        const [entriesSnap, usersSnap, customersSnap, ordersSnap] =
+          await Promise.all([
+            getDocs(collection(db, "accountingEntries")),
+            getDocs(collection(db, "users")),
+            getDocs(collection(db, "customers")),
+            getDocs(collection(db, "salesOrders")),
+          ]);
 
         const nextEntries = entriesSnap.docs
           .map((entryDoc) => ({
@@ -363,7 +316,7 @@ export default function AccountingPage() {
         setOrders(nextOrders);
       } catch (error) {
         console.error(error);
-        toast.error("Failed to load accounting entries");
+        toast.error("Failed to load sales orders");
       } finally {
         setLoading(false);
       }
@@ -372,97 +325,73 @@ export default function AccountingPage() {
     fetchData();
   }, [authLoading, canView, user]);
 
-  const filteredEntries = useMemo(() => {
-    return entries.filter((entry) => {
-      if (statusFilter !== "all" && entry.status !== statusFilter) return false;
-      if (directionFilter !== "all" && entry.direction !== directionFilter) {
-        return false;
-      }
-      const entryDate = entryDateValue(entry.createdAt);
-      if (dateFrom && (!entryDate || entryDate < dateFrom)) return false;
-      if (dateTo && (!entryDate || entryDate > dateTo)) return false;
-      if (employeeFilter !== "all" && entry.createdBy !== employeeFilter) {
-        return false;
-      }
-      return true;
-    });
-  }, [entries, statusFilter, directionFilter, dateFrom, dateTo, employeeFilter]);
+  const salesOrderRows = useMemo(() => {
+    return Object.entries(orders)
+      .map(([orderId, order]) => {
+        const orderEntries = entries.filter((entry) => entry.orderId === orderId);
+        const pendingEntries = orderEntries.filter(
+          (entry) => entry.status !== "confirmed"
+        );
+        const confirmedEntries = orderEntries.filter(
+          (entry) => entry.status === "confirmed"
+        );
+        const inAmount = orderEntries
+          .filter((entry) => entry.direction === "in")
+          .reduce((sum, entry) => sum + safeNum(entry.amount), 0);
+        const outAmount = orderEntries
+          .filter((entry) => entry.direction === "out")
+          .reduce((sum, entry) => sum + safeNum(entry.amount), 0);
+        const customerId = order.customerId || orderEntries[0]?.customerId;
+        const marketerId =
+          order.createdBy ||
+          orderEntries.find((entry) => entry.createdBy)?.createdBy ||
+          null;
+        const accountingStatus =
+          orderEntries.length === 0
+            ? "Needs Review"
+            : pendingEntries.length > 0
+              ? "Needs Confirmation"
+              : "Confirmed";
 
-  const totals = useMemo(() => {
-    return filteredEntries.reduce(
-      (acc, entry) => {
-        const bucket = entry.status === "confirmed" ? "confirmed" : "pending";
-        const direction = entry.direction === "in" ? "in" : "out";
-        acc[bucket][direction] += safeNum(entry.amount);
-        return acc;
-      },
-      {
-        pending: { in: 0, out: 0 },
-        confirmed: { in: 0, out: 0 },
-      }
-    );
-  }, [filteredEntries]);
-
-  const employeeOptions = useMemo(() => {
-    const ids = Array.from(
-      new Set(entries.map((entry) => entry.createdBy).filter(Boolean))
-    ) as string[];
-    return ids.sort((a, b) => {
-      const an = users[a]?.name || users[a]?.email || a;
-      const bn = users[b]?.name || users[b]?.email || b;
-      return an.localeCompare(bn);
-    });
-  }, [entries, users]);
+        return {
+          id: orderId,
+          ...order,
+          customerId,
+          marketerId,
+          inAmount,
+          outAmount,
+          entryCount: orderEntries.length,
+          pendingCount: pendingEntries.length,
+          confirmedCount: confirmedEntries.length,
+          needsConfirmation: pendingEntries.length > 0,
+          accountingStatus,
+        };
+      })
+      .sort((a, b) => {
+        const aDate = toDate(a.createdAt)?.getTime() ?? 0;
+        const bDate = toDate(b.createdAt)?.getTime() ?? 0;
+        return bDate - aDate;
+      });
+  }, [entries, orders]);
 
   const overview = useMemo(() => {
-    const totalIn = totals.pending.in + totals.confirmed.in;
-    const totalOut = totals.pending.out + totals.confirmed.out;
-    const pendingCount = filteredEntries.filter(
-      (entry) => entry.status === "pending"
+    const needsConfirmation = salesOrderRows.filter(
+      (order) => order.needsConfirmation
     ).length;
-    const confirmedCount = filteredEntries.filter(
-      (entry) => entry.status === "confirmed"
+    const confirmed = salesOrderRows.filter(
+      (order) => order.entryCount > 0 && order.pendingCount === 0
+    ).length;
+    const needsReview = salesOrderRows.filter(
+      (order) => order.entryCount === 0
     ).length;
 
     return {
-      totalIn,
-      totalOut,
-      net: totalIn - totalOut,
-      pendingCount,
-      confirmedCount,
+      total: salesOrderRows.length,
+      needsConfirmation,
+      confirmed,
+      needsReview,
     };
-  }, [filteredEntries, totals]);
-
-  const applyDatePreset = (preset: string) => {
-    setDatePreset(preset);
-
-    if (preset === "today") {
-      const range = todayRange();
-      setDateFrom(range.from);
-      setDateTo(range.to);
-      return;
-    }
-
-    if (preset === "thisMonth") {
-      const range = thisMonthRange();
-      setDateFrom(range.from);
-      setDateTo(range.to);
-      return;
-    }
-
-    if (preset === "previousMonth") {
-      const range = previousMonthRange();
-      setDateFrom(range.from);
-      setDateTo(range.to);
-    }
-  };
-
-  const presetButtonClass = (preset: string) =>
-    `h-8 rounded-md border px-3 text-xs font-medium transition-colors ${
-      datePreset === preset
-        ? "border-primary bg-primary text-primary-foreground"
-        : "bg-background hover:bg-muted"
-    }`;
+  }, [salesOrderRows]);
 
   const confirmEntry = async (entryId: string) => {
     if (!canConfirm) {
@@ -478,17 +407,24 @@ export default function AccountingPage() {
         confirmedAt: serverTimestamp(),
       });
 
-      setEntries((prev) =>
-        prev.map((entry) =>
-          entry.id === entryId
-            ? {
-                ...entry,
-                status: "confirmed",
-                confirmedBy: user?.uid || null,
-                confirmedAt: new Date(),
-              }
-            : entry
-        )
+      const updateEntry = (entry: AccountingEntry): AccountingEntry =>
+        entry.id === entryId
+          ? {
+              ...entry,
+              status: "confirmed",
+              confirmedBy: user?.uid || null,
+              confirmedAt: new Date(),
+            }
+          : entry;
+
+      setEntries((prev) => prev.map(updateEntry));
+      setOrderDetails((prev) =>
+        prev
+          ? {
+              ...prev,
+              accountingEntries: prev.accountingEntries.map(updateEntry),
+            }
+          : prev
       );
       toast.success("Entry confirmed");
     } catch (error) {
@@ -528,11 +464,14 @@ export default function AccountingPage() {
         id: paymentDoc.id,
         ...(paymentDoc.data() as any),
       })) as OrderPayment[];
+      const accountingEntries = entries.filter((entry) => entry.orderId === orderId);
 
       setOrderDetails({
         order: {
           id: orderSnap.id,
           orderNumber: orderData.orderNumber,
+          customerId: orderData.customerId,
+          createdBy: orderData.createdBy || null,
           status: orderData.status,
           totalCost: orderData.totalCost,
           totalPrice: orderData.totalPrice,
@@ -540,7 +479,9 @@ export default function AccountingPage() {
           fullAmount: orderData.fullAmount,
           paidAmount: orderData.paidAmount,
           remainingAmount: orderData.remainingAmount,
+          createdAt: orderData.createdAt,
         },
+        accountingEntries,
         services,
         payments,
       });
@@ -551,27 +492,6 @@ export default function AccountingPage() {
       setLoadingOrderDetails(false);
     }
   };
-
-  const metricCard = (
-    title: string,
-    value: string,
-    detail: string,
-    icon: ReactNode,
-    tone: string
-  ) => (
-    <Card className="border bg-background shadow-sm">
-      <CardContent className="flex items-center justify-between gap-4 p-4">
-        <div className="min-w-0">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {title}
-          </div>
-          <div className="mt-1 truncate text-xl font-semibold">{value}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
-        </div>
-        <div className={`rounded-md p-2 ${tone}`}>{icon}</div>
-      </CardContent>
-    </Card>
-  );
 
   const attachmentCell = (file: UploadedFile, label: string) => {
     if (hasAttachment(file)) {
@@ -611,244 +531,130 @@ export default function AccountingPage() {
               <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                 <div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <ReceiptText className="h-4 w-4" />
-                    <span>Accounting Entries</span>
+                    <ClipboardList className="h-4 w-4" />
+                    <span>Accounting Sales</span>
                   </div>
                   <h1 className="mt-1 text-2xl font-semibold tracking-normal">
-                    In / Out Review
+                    Sales Orders
                   </h1>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary">{filteredEntries.length} entries</Badge>
-                  <Badge variant="outline">{overview.pendingCount} pending</Badge>
+                  <Badge variant="secondary">{overview.total} orders</Badge>
+                  <Badge variant="outline">
+                    {overview.needsConfirmation} need confirmation
+                  </Badge>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-                {metricCard(
-                  "Net Balance",
-                  formatMoney(overview.net),
-                  "In minus out",
-                  <Banknote className="h-5 w-5" />,
-                  overview.net >= 0
-                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40"
-                    : "bg-rose-50 text-rose-700 dark:bg-rose-950/40"
-                )}
-                {metricCard(
-                  "Total In",
-                  formatMoney(overview.totalIn),
-                  `${formatMoney(totals.pending.in)} pending`,
-                  <TrendingUp className="h-5 w-5" />,
-                  "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40"
-                )}
-                {metricCard(
-                  "Total Out",
-                  formatMoney(overview.totalOut),
-                  `${formatMoney(totals.pending.out)} pending`,
-                  <TrendingDown className="h-5 w-5" />,
-                  "bg-rose-50 text-rose-700 dark:bg-rose-950/40"
-                )}
-                {metricCard(
-                  "Pending",
-                  String(overview.pendingCount),
-                  formatMoney(totals.pending.in - totals.pending.out),
-                  <Clock3 className="h-5 w-5" />,
-                  "bg-amber-50 text-amber-700 dark:bg-amber-950/40"
-                )}
-                {metricCard(
-                  "Confirmed",
-                  String(overview.confirmedCount),
-                  formatMoney(totals.confirmed.in - totals.confirmed.out),
-                  <CheckCircle2 className="h-5 w-5" />,
-                  "bg-sky-50 text-sky-700 dark:bg-sky-950/40"
-                )}
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                <Card className="border bg-background shadow-sm">
+                  <CardContent className="p-4">
+                    <div className="text-xs font-medium uppercase text-muted-foreground">
+                      All Orders
+                    </div>
+                    <div className="mt-1 text-2xl font-semibold">{overview.total}</div>
+                  </CardContent>
+                </Card>
+                <Card className="border bg-background shadow-sm">
+                  <CardContent className="p-4">
+                    <div className="text-xs font-medium uppercase text-muted-foreground">
+                      Need Confirmation
+                    </div>
+                    <div className="mt-1 text-2xl font-semibold text-amber-600">
+                      {overview.needsConfirmation}
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="border bg-background shadow-sm">
+                  <CardContent className="p-4">
+                    <div className="text-xs font-medium uppercase text-muted-foreground">
+                      Confirmed
+                    </div>
+                    <div className="mt-1 text-2xl font-semibold text-emerald-600">
+                      {overview.confirmed}
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="border bg-background shadow-sm">
+                  <CardContent className="p-4">
+                    <div className="text-xs font-medium uppercase text-muted-foreground">
+                      Needs Review
+                    </div>
+                    <div className="mt-1 text-2xl font-semibold text-rose-600">
+                      {overview.needsReview}
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
-
-              <Card className="border bg-background shadow-sm">
-                <CardContent className="p-3">
-                  <div className="flex flex-wrap items-end gap-2">
-                    <div className="flex h-8 items-center gap-2 rounded-md border bg-muted/20 px-2 text-xs font-medium text-muted-foreground">
-                      <Filter className="h-3.5 w-3.5" />
-                      Filters
-                    </div>
-
-                    <div className="flex flex-wrap gap-1">
-                      <button
-                        type="button"
-                        className={presetButtonClass("today")}
-                        onClick={() => applyDatePreset("today")}
-                      >
-                        Today
-                      </button>
-                      <button
-                        type="button"
-                        className={presetButtonClass("thisMonth")}
-                        onClick={() => applyDatePreset("thisMonth")}
-                      >
-                        This Month
-                      </button>
-                      <button
-                        type="button"
-                        className={presetButtonClass("previousMonth")}
-                        onClick={() => applyDatePreset("previousMonth")}
-                      >
-                        Previous Month
-                      </button>
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      <Label className="text-xs text-muted-foreground">From</Label>
-                      <Input
-                        type="date"
-                        className="h-8 w-[140px] text-xs"
-                        value={dateFrom}
-                        onChange={(event) => {
-                          setDatePreset("custom");
-                          setDateFrom(event.target.value);
-                        }}
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      <Label className="text-xs text-muted-foreground">To</Label>
-                      <Input
-                        type="date"
-                        className="h-8 w-[140px] text-xs"
-                        value={dateTo}
-                        onChange={(event) => {
-                          setDatePreset("custom");
-                          setDateTo(event.target.value);
-                        }}
-                      />
-                    </div>
-
-                    <select
-                      className="h-8 rounded-md border bg-background px-2 text-xs"
-                      value={statusFilter}
-                      onChange={(event) => setStatusFilter(event.target.value)}
-                    >
-                      <option value="all">All Statuses</option>
-                      <option value="pending">Pending</option>
-                      <option value="confirmed">Confirmed</option>
-                    </select>
-
-                    <select
-                      className="h-8 rounded-md border bg-background px-2 text-xs"
-                      value={directionFilter}
-                      onChange={(event) => setDirectionFilter(event.target.value)}
-                    >
-                      <option value="all">All Directions</option>
-                      <option value="in">In</option>
-                      <option value="out">Out</option>
-                    </select>
-
-                    <select
-                      className="h-8 min-w-[150px] rounded-md border bg-background px-2 text-xs"
-                      value={employeeFilter}
-                      onChange={(event) => setEmployeeFilter(event.target.value)}
-                    >
-                      <option value="all">All Employees</option>
-                      {employeeOptions.map((employeeId) => (
-                        <option key={employeeId} value={employeeId}>
-                          {users[employeeId]?.name ||
-                            users[employeeId]?.email ||
-                            employeeId}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </CardContent>
-              </Card>
 
               <Card className="overflow-hidden border bg-background shadow-sm">
                 <CardHeader className="border-b bg-muted/20 px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <CardTitle className="text-base">Entries</CardTitle>
-                    <div className="text-sm text-muted-foreground">
-                      {formatMoney(overview.totalIn)} in /{" "}
-                      {formatMoney(overview.totalOut)} out
-                    </div>
-                  </div>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <ReceiptText className="h-4 w-4 text-muted-foreground" />
+                    Sales Orders
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
                   {loading ? (
                     <div className="py-12 text-center text-sm text-muted-foreground">
-                      Loading accounting entries...
+                      Loading sales orders...
                     </div>
-                  ) : filteredEntries.length === 0 ? (
+                  ) : salesOrderRows.length === 0 ? (
                     <div className="py-12 text-center text-sm text-muted-foreground">
-                      No entries found.
+                      No sales orders found.
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[1120px] text-sm">
+                      <table className="w-full min-w-[1040px] text-sm">
                         <thead className="bg-muted/30">
                           <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                            <th className="px-4 py-3 font-medium">Entry</th>
+                            <th className="px-4 py-3 font-medium">Order</th>
                             <th className="px-4 py-3 font-medium">Customer</th>
-                            <th className="px-4 py-3 font-medium">Employee</th>
-                            <th className="px-4 py-3 font-medium">Method</th>
-                            <th className="px-4 py-3 font-medium">Fee</th>
-                            <th className="px-4 py-3 text-right font-medium">
-                              Amount
+                            <th className="px-4 py-3 font-medium">Marketer</th>
+                            <th className="px-4 py-3 font-medium">Order Status</th>
+                            <th className="px-4 py-3 font-medium">
+                              Accounting Status
                             </th>
-                            <th className="px-4 py-3 font-medium">Status</th>
-                            <th className="px-4 py-3 font-medium">Created</th>
-                            <th className="px-4 py-3 font-medium">File</th>
+                            <th className="px-4 py-3 text-right font-medium">In</th>
+                            <th className="px-4 py-3 text-right font-medium">Out</th>
+                            <th className="px-4 py-3 font-medium">
+                              Confirmation
+                            </th>
                             <th className="px-4 py-3 text-right font-medium">
                               Action
                             </th>
                           </tr>
                         </thead>
                         <tbody>
-                          {filteredEntries.map((entry) => {
-                            const customer = customers[entry.customerId];
-                            const employee = entry.createdBy
-                              ? users[entry.createdBy]
+                          {salesOrderRows.map((order) => {
+                            const customer = order.customerId
+                              ? customers[order.customerId]
                               : null;
-                            const isIn = entry.direction === "in";
+                            const marketer = order.marketerId
+                              ? users[order.marketerId]
+                              : null;
+                            const accountingTone =
+                              order.accountingStatus === "Confirmed"
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                : order.accountingStatus === "Needs Confirmation"
+                                  ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+                                  : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300";
 
                             return (
                               <tr
-                                key={entry.id}
+                                key={order.id}
                                 className="border-b transition-colors hover:bg-muted/20 last:border-0"
                               >
                                 <td className="px-4 py-4 align-top">
-                                  <div className="flex items-start gap-3">
-                                    <span
-                                      className={`mt-0.5 flex h-8 w-8 items-center justify-center rounded-md ${
-                                        isIn
-                                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40"
-                                          : "bg-rose-50 text-rose-700 dark:bg-rose-950/40"
-                                      }`}
-                                    >
-                                      {isIn ? (
-                                        <ArrowDownLeft className="h-4 w-4" />
-                                      ) : (
-                                        <ArrowUpRight className="h-4 w-4" />
-                                      )}
-                                    </span>
-                                    <div className="min-w-0">
-                                      <div className="truncate font-medium">
-                                        {entry.description || "-"}
-                                      </div>
-                                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                        <span>{sourceLabel(entry.sourceType)}</span>
-                                        <span className="h-1 w-1 rounded-full bg-muted-foreground/40" />
-                                        <button
-                                          type="button"
-                                          className="max-w-[150px] truncate text-primary underline-offset-2 hover:underline"
-                                          onClick={() =>
-                                            openOrderDetails(entry.orderId)
-                                          }
-                                          title="Open order details"
-                                        >
-                                          {entry.orderNumber ||
-                                            orders[entry.orderId]?.orderNumber ||
-                                            entry.orderId}
-                                        </button>
-                                      </div>
-                                    </div>
+                                  <button
+                                    type="button"
+                                    className="font-semibold text-primary underline-offset-2 hover:underline"
+                                    onClick={() => openOrderDetails(order.id)}
+                                  >
+                                    {order.orderNumber || order.id}
+                                  </button>
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {displayDate(order.createdAt)}
                                   </div>
                                 </td>
                                 <td className="px-4 py-4 align-top">
@@ -856,92 +662,68 @@ export default function AccountingPage() {
                                     {customer?.name || "-"}
                                   </div>
                                   <div className="text-xs text-muted-foreground">
-                                    {customer?.phone || entry.customerId}
+                                    {customer?.phone || order.customerId || "-"}
                                   </div>
                                 </td>
                                 <td className="px-4 py-4 align-top">
-                                  <div>{employee?.name || employee?.email || "-"}</div>
-                                </td>
-                                <td className="px-4 py-4 align-top">
-                                  {entry.paymentMethodName ? (
-                                    <div>
-                                      <div>{entry.paymentMethodName}</div>
-                                      <div className="text-xs text-muted-foreground">
-                                        {safeNum(entry.paymentMethodPercentageRate)}% +{" "}
-                                        {safeNum(entry.paymentMethodFixedFee)} SAR
-                                      </div>
+                                  <div className="font-medium">
+                                    {marketer?.name || marketer?.email || "-"}
+                                  </div>
+                                  {order.marketerId ? (
+                                    <div className="text-xs text-muted-foreground">
+                                      {order.marketerId}
                                     </div>
-                                  ) : (
-                                    <span className="text-muted-foreground">-</span>
-                                  )}
+                                  ) : null}
                                 </td>
                                 <td className="px-4 py-4 align-top">
-                                  {typeof entry.paymentMethodFeeAmount === "number" ? (
-                                    formatMoney(entry.paymentMethodFeeAmount)
-                                  ) : (
-                                    <span className="text-muted-foreground">-</span>
-                                  )}
-                                </td>
-                                <td className="px-4 py-4 text-right align-top">
-                                  <span
-                                    className={`font-semibold ${
-                                      isIn ? "text-emerald-600" : "text-rose-600"
-                                    }`}
-                                  >
-                                    {isIn ? "+" : "-"}
-                                    {formatMoney(entry.amount)}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-4 align-top">
-                                  <Badge
-                                    variant={
-                                      entry.status === "confirmed"
-                                        ? "default"
-                                        : "secondary"
-                                    }
-                                  >
-                                    {entry.status}
+                                  <Badge variant="outline">
+                                    {compactStatusLabel(order.status)}
                                   </Badge>
                                 </td>
-                                <td className="px-4 py-4 align-top text-muted-foreground">
-                                  {displayDate(entry.createdAt)}
+                                <td className="px-4 py-4 align-top">
+                                  <Badge variant="outline" className={accountingTone}>
+                                    {order.accountingStatus}
+                                  </Badge>
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {order.entryCount} operations
+                                  </div>
+                                </td>
+                                <td className="px-4 py-4 text-right align-top font-semibold text-emerald-600">
+                                  {formatMoney(order.inAmount)}
+                                </td>
+                                <td className="px-4 py-4 text-right align-top font-semibold text-rose-600">
+                                  {formatMoney(order.outAmount)}
                                 </td>
                                 <td className="px-4 py-4 align-top">
-                                  {entry.file?.url ? (
-                                    <Button asChild variant="outline" size="sm">
-                                      <a
-                                        href={entry.file.url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                      >
-                                        <ExternalLink className="mr-1 h-4 w-4" />
-                                        Open
-                                      </a>
-                                    </Button>
+                                  {order.pendingCount > 0 ? (
+                                    <div className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+                                      <Clock3 className="h-3.5 w-3.5" />
+                                      {order.pendingCount} pending
+                                    </div>
+                                  ) : order.entryCount === 0 ? (
+                                    <div className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
+                                      <FileWarning className="h-3.5 w-3.5" />
+                                      No entries
+                                    </div>
                                   ) : (
-                                    <span className="text-muted-foreground">-</span>
+                                    <div className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
+                                      <CheckCircle2 className="h-3.5 w-3.5" />
+                                      No confirmation needed
+                                    </div>
                                   )}
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {order.confirmedCount} confirmed
+                                  </div>
                                 </td>
                                 <td className="px-4 py-4 text-right align-top">
-                                  {entry.status === "pending" ? (
-                                    <Button
-                                      size="sm"
-                                      className="cursor-pointer"
-                                      onClick={() => confirmEntry(entry.id)}
-                                      disabled={
-                                        !canConfirm || confirmingId === entry.id
-                                      }
-                                    >
-                                      <CheckCircle2 className="mr-1 h-4 w-4" />
-                                      {confirmingId === entry.id
-                                        ? "Confirming..."
-                                        : "Confirm"}
-                                    </Button>
-                                  ) : (
-                                    <span className="text-xs text-muted-foreground">
-                                      Confirmed
-                                    </span>
-                                  )}
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => openOrderDetails(order.id)}
+                                  >
+                                    Review
+                                  </Button>
                                 </td>
                               </tr>
                             );
@@ -958,11 +740,11 @@ export default function AccountingPage() {
       </SidebarProvider>
 
       <Dialog open={orderDialogOpen} onOpenChange={setOrderDialogOpen}>
-        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-5xl">
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-6xl">
           <DialogHeader>
             <DialogTitle>Order Details</DialogTitle>
             <DialogDescription>
-              Services, payments, and attachment status for the selected order.
+              Accounting operations, services, payments, and attachment status.
             </DialogDescription>
           </DialogHeader>
 
@@ -981,8 +763,8 @@ export default function AccountingPage() {
                 </div>
                 <div className="rounded-md border bg-muted/20 p-3">
                   <div className="text-xs text-muted-foreground">Status</div>
-                  <div className="mt-1 text-sm font-semibold capitalize">
-                    {orderDetails.order.status || "-"}
+                  <div className="mt-1 text-sm font-semibold">
+                    {compactStatusLabel(orderDetails.order.status)}
                   </div>
                 </div>
                 <div className="rounded-md border bg-emerald-50 p-3 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
@@ -1007,6 +789,127 @@ export default function AccountingPage() {
                     )}
                   </div>
                 </div>
+              </div>
+
+              <div className="rounded-lg border">
+                <div className="border-b bg-muted/20 px-4 py-3">
+                  <div className="font-semibold">Accounting Operations</div>
+                </div>
+                {orderDetails.accountingEntries.length === 0 ? (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    No accounting operations found for this order.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[860px] text-sm">
+                      <thead className="bg-muted/20 text-xs uppercase text-muted-foreground">
+                        <tr>
+                          <th className="px-4 py-3 text-left font-medium">
+                            Operation
+                          </th>
+                          <th className="px-4 py-3 text-left font-medium">
+                            Direction
+                          </th>
+                          <th className="px-4 py-3 text-right font-medium">
+                            Amount
+                          </th>
+                          <th className="px-4 py-3 text-left font-medium">Status</th>
+                          <th className="px-4 py-3 text-left font-medium">File</th>
+                          <th className="px-4 py-3 text-right font-medium">
+                            Action
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orderDetails.accountingEntries.map((entry) => {
+                          const isIn = entry.direction === "in";
+
+                          return (
+                            <tr key={entry.id} className="border-t">
+                              <td className="px-4 py-3">
+                                <div className="font-medium">
+                                  {entry.description || sourceLabel(entry.sourceType)}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {sourceLabel(entry.sourceType)}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div
+                                  className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${
+                                    isIn
+                                      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                      : "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
+                                  }`}
+                                >
+                                  {isIn ? (
+                                    <ArrowDownLeft className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <ArrowUpRight className="h-3.5 w-3.5" />
+                                  )}
+                                  {entry.direction.toUpperCase()}
+                                </div>
+                              </td>
+                              <td
+                                className={`px-4 py-3 text-right font-semibold ${
+                                  isIn ? "text-emerald-600" : "text-rose-600"
+                                }`}
+                              >
+                                {isIn ? "+" : "-"}
+                                {formatMoney(entry.amount)}
+                              </td>
+                              <td className="px-4 py-3">
+                                <Badge
+                                  variant={
+                                    entry.status === "confirmed"
+                                      ? "default"
+                                      : "secondary"
+                                  }
+                                >
+                                  {entry.status}
+                                </Badge>
+                              </td>
+                              <td className="px-4 py-3">
+                                {entry.file?.url ? (
+                                  <Button asChild variant="outline" size="sm">
+                                    <a
+                                      href={entry.file.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      <ExternalLink className="mr-1 h-4 w-4" />
+                                      Open
+                                    </a>
+                                  </Button>
+                                ) : (
+                                  <span className="text-muted-foreground">-</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                {entry.status === "pending" ? (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => confirmEntry(entry.id)}
+                                    disabled={!canConfirm || confirmingId === entry.id}
+                                  >
+                                    <CheckCircle2 className="mr-1 h-4 w-4" />
+                                    {confirmingId === entry.id
+                                      ? "Confirming..."
+                                      : "Confirm"}
+                                  </Button>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">
+                                    No confirmation needed
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               <div className="rounded-lg border">
@@ -1103,7 +1006,7 @@ export default function AccountingPage() {
             </div>
           ) : (
             <div className="py-12 text-center text-sm text-muted-foreground">
-              Select an order to view details.
+              Select an order to review.
             </div>
           )}
         </DialogContent>

@@ -66,6 +66,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       url: "/management/sales",
       requiredPrivilege: "management.sales-view",
     },
+    {
+      title: "Marketers",
+      url: "/management/marketers",
+      requiredPrivilege: "management.sales-view",
+    },
 
 
     {
@@ -106,6 +111,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     {
       title: "Entries",
       url: "/accounting",
+      requiredPrivilege: "accounting.view",
+    },
+    {
+      title: "Sales Orders",
+      url: "/accounting/sales-orders",
       requiredPrivilege: "accounting.view",
     },
     {
