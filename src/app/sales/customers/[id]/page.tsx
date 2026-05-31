@@ -72,6 +72,7 @@ type CustomerDoc = {
 
 type SalesOrder = {
   id: string;
+  orderNumber?: string;
   status?: string;
   totalCost?: number;
   totalPrice?: number;
@@ -377,6 +378,7 @@ export default function CustomerDetailsPage() {
                         <Table>
                           <TableHeader>
                             <TableRow>
+                              <TableHead>Order ID</TableHead>
                               <TableHead>Date</TableHead>
                               <TableHead>Status</TableHead>
                               <TableHead>Total</TableHead>
@@ -389,6 +391,9 @@ export default function CustomerDetailsPage() {
                           <TableBody>
                             {orders.map((order) => (
                               <TableRow key={order.id}>
+                                <TableCell className="font-medium">
+                                  {order.orderNumber || order.id}
+                                </TableCell>
                                 <TableCell>
                                   {formatDate(order.createdAt, "yyyy-MM-dd HH:mm")}
                                 </TableCell>

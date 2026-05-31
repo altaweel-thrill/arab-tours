@@ -27,6 +27,7 @@ export const rolePrivileges = {
     "operations.view": true,
     "accounting.view": true,
     "accounting.confirm": true,
+    "accounting.payment-methods": true,
 
    
   },
@@ -52,6 +53,7 @@ export const rolePrivileges = {
    "management.customers-view": false,
    "accounting.view": false,
    "accounting.confirm": false,
+   "accounting.payment-methods": false,
 },
   salesManager: {
     "sales.view": true,
@@ -64,6 +66,7 @@ export const rolePrivileges = {
     "customers.view": true,
     "accounting.view": false,
     "accounting.confirm": false,
+    "accounting.payment-methods": false,
          "management.customers-view": false,
 
   },
@@ -83,6 +86,7 @@ export const rolePrivileges = {
     "employees.edit": true,
     "accounting.view": false,
     "accounting.confirm": false,
+    "accounting.payment-methods": false,
          "management.customers-view": false,
 
   },
@@ -103,6 +107,7 @@ export const rolePrivileges = {
     "management.customers-view": false,
     "accounting.view": true,
     "accounting.confirm": true,
+    "accounting.payment-methods": true,
   },
   employee: {
     "employees.view": true,
@@ -120,6 +125,7 @@ export const rolePrivileges = {
     "employees.edit": false,
     "accounting.view": false,
     "accounting.confirm": false,
+    "accounting.payment-methods": false,
          "management.customers-view": false,
 
   },

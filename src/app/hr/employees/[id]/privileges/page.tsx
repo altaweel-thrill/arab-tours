@@ -37,6 +37,27 @@ export default function EditEmployeePrivilegesPage() {
   const [privileges, setPrivileges] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
 
+  const allPrivilegeKeys = Array.from(
+    new Set(Object.values(rolePrivileges).flatMap((r) => Object.keys(r)))
+  );
+
+  const buildCompletePrivilegeState = (
+    role?: string,
+    savedPrivileges?: Record<string, boolean>
+  ) => {
+    const base = Object.fromEntries(allPrivilegeKeys.map((key) => [key, false]));
+    const roleDefaults =
+      role && role in rolePrivileges
+        ? rolePrivileges[role as keyof typeof rolePrivileges]
+        : {};
+
+    return {
+      ...base,
+      ...roleDefaults,
+      ...(savedPrivileges || {}),
+    };
+  };
+
   // 🔹 Load employee data
   useEffect(() => {
     if (!id) return;
@@ -47,7 +68,9 @@ export default function EditEmployeePrivilegesPage() {
         if (snap.exists()) {
           const data = snap.data();
           setEmployee(data);
-          setPrivileges(data.privileges || {});
+          setPrivileges(
+            buildCompletePrivilegeState(data.role, data.privileges || {})
+          );
         }
       } catch (e) {
         console.error("Error loading employee:", e);
@@ -58,11 +81,6 @@ export default function EditEmployeePrivilegesPage() {
     };
     fetchEmployee();
   }, [id]);
-
-  // 🔹 Collect all privileges across roles
-  const allPrivilegeKeys = Array.from(
-    new Set(Object.values(rolePrivileges).flatMap((r) => Object.keys(r)))
-  );
 
   // 🔹 Group privileges by section (prefix before '.')
   const grouped: Record<string, string[]> = {};
@@ -94,7 +112,7 @@ export default function EditEmployeePrivilegesPage() {
       return;
     }
 
-    setPrivileges(roleData);
+    setPrivileges(buildCompletePrivilegeState(employee.role, roleData));
     toast.info(`Applied ${role} role privileges`);
   };
 
@@ -108,7 +126,14 @@ export default function EditEmployeePrivilegesPage() {
   // Save changes
   const handleSave = async () => {
     try {
-      await updateDoc(doc(db, "users", id as string), { privileges });
+      const normalized = Object.fromEntries(
+        allPrivilegeKeys.map((key) => [key, privileges[key] === true])
+      );
+
+      await updateDoc(doc(db, "users", id as string), {
+        privileges: normalized,
+      });
+      setPrivileges(normalized);
       toast.success("Privileges updated successfully!");
      
     } catch (error) {

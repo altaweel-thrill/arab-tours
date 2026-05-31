@@ -9,6 +9,7 @@ import {
   getDoc,
   getDocs,
   query,
+  runTransaction,
   where,
   serverTimestamp,
   updateDoc,
@@ -121,6 +122,10 @@ function clampQty(n: any) {
 function safeNum(n: any) {
   const v = Number(n);
   return Number.isFinite(v) ? v : 0;
+}
+
+function formatOrderNumber(year: number, sequence: number) {
+  return `ORD-${year}-${String(sequence).padStart(4, "0")}`;
 }
 
 function calculatePaymentMethodFee(
@@ -496,22 +501,49 @@ export default function AddSalesOrderPage() {
     try {
       setSaving(true);
 
-      const orderRef = await addDoc(collection(db, "salesOrders"), {
-        customerId,
-        createdBy: user?.uid || null,
-        status: "pending",
+      const orderRef = doc(collection(db, "salesOrders"));
+      const orderYear = new Date().getFullYear();
+      const counterRef = doc(db, "counters", `salesOrders-${orderYear}`);
+      const orderNumber = await runTransaction(db, async (transaction) => {
+        const counterSnap = await transaction.get(counterRef);
+        const lastNumber = counterSnap.exists()
+          ? safeNum(counterSnap.data().lastNumber)
+          : 0;
+        const nextNumber = lastNumber + 1;
+        const nextOrderNumber = formatOrderNumber(orderYear, nextNumber);
 
-        totalCost: totals.totalCost,
-        totalPrice: totals.totalPrice,
-        totalProfit: totals.totalProfit,
+        transaction.set(
+          counterRef,
+          {
+            lastNumber: nextNumber,
+            year: orderYear,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
 
-        fullAmount: safeNum(fullAmount),
-        paidAmount: totals.paidAmount,
-        remainingAmount: totals.remainingAmount,
-        paymentsCount: enteredPayments.length,
+        transaction.set(orderRef, {
+          orderNumber: nextOrderNumber,
+          orderNumberYear: orderYear,
+          orderNumberSequence: nextNumber,
+          customerId,
+          createdBy: user?.uid || null,
+          status: "pending",
 
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+          totalCost: totals.totalCost,
+          totalPrice: totals.totalPrice,
+          totalProfit: totals.totalProfit,
+
+          fullAmount: safeNum(fullAmount),
+          paidAmount: totals.paidAmount,
+          remainingAmount: totals.remainingAmount,
+          paymentsCount: enteredPayments.length,
+
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        return nextOrderNumber;
       });
 
       for (const raw of services) {
@@ -564,6 +596,7 @@ export default function AddSalesOrderPage() {
           amount: s.cost,
           currency: "SAR",
           description: s.description || `${s.type} service cost`,
+          orderNumber,
           file: invoiceFile,
           status: "pending",
           createdBy: user?.uid || null,
@@ -614,6 +647,7 @@ export default function AddSalesOrderPage() {
           sourceType: "customer_payment",
           amount: safeNum(payment.amount),
           currency: "SAR",
+          orderNumber,
           paymentMethodId: payment.paymentMethodId,
           paymentMethodName: payment.paymentMethodName,
           paymentMethodPercentageRate: payment.paymentMethodPercentageRate,
@@ -637,6 +671,7 @@ export default function AddSalesOrderPage() {
             sourceType: "payment_method_fee",
             amount: paymentMethodFeeAmount,
             currency: "SAR",
+            orderNumber,
             paymentMethodId: payment.paymentMethodId,
             paymentMethodName: payment.paymentMethodName,
             paymentMethodPercentageRate: payment.paymentMethodPercentageRate,

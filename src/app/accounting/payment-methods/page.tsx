@@ -217,7 +217,7 @@ export default function PaymentMethodsPage() {
   };
 
   return (
-    <ProtectedRouteWithPrivilege requiredPrivilege="accounting.confirm">
+    <ProtectedRouteWithPrivilege requiredPrivilege="accounting.payment-methods">
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset>

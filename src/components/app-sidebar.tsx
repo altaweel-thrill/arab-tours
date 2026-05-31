@@ -111,7 +111,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     {
       title: "Payment Methods",
       url: "/accounting/payment-methods",
-      requiredPrivilege: "accounting.confirm",
+      requiredPrivilege: "accounting.payment-methods",
     },
   ],
 },

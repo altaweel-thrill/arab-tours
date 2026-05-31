@@ -35,7 +35,11 @@ const privilegeGroups = {
   employees: ["employees.view", "employees.add", "employees.edit", "employees.delete"],
   departments: ["departments.view", "departments.manage"],
   reports: ["reports.view", "reports.export"],
-  accounting: ["accounting.view", "accounting.confirm"],
+  accounting: [
+    "accounting.view",
+    "accounting.confirm",
+    "accounting.payment-methods",
+  ],
   settings: ["settings.update", "settings.privileges"],
 };
 
