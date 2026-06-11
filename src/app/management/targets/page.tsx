@@ -56,6 +56,7 @@ type SalesOrder = {
   createdBy?: string | null;
   fullAmount?: number;
   totalPrice?: number;
+  totalProfit?: number;
   paidAmount?: number;
   remainingAmount?: number;
   createdAt?: any;
@@ -270,6 +271,11 @@ export default function ManagementTargetsPage() {
           (sum, order) => sum + safeNum(order.paidAmount),
           0
         );
+        const profitAmount = employeeOrders.reduce(
+          (sum, order) => sum + safeNum(order.totalProfit),
+          0
+        );
+        const commissionBase = profitAmount * 0.85;
         const employeePlan = plans[planId(employeeId, selectedMonth)];
         const currency = "SAR";
         const targetAmount = safeNum(employeePlan?.targetAmount);
@@ -277,7 +283,7 @@ export default function ManagementTargetsPage() {
         const currentTier = getCurrentTier(tiers, achievedSales);
         const nextTier = getNextTier(tiers, achievedSales);
         const commissionAmount = currentTier
-          ? (achievedSales * safeNum(currentTier.rate)) / 100
+          ? (commissionBase * safeNum(currentTier.rate)) / 100
           : 0;
         const progress = targetAmount
           ? Math.min(100, Math.round((achievedSales / targetAmount) * 100))
@@ -289,6 +295,8 @@ export default function ManagementTargetsPage() {
           email: user?.email,
           achievedSales,
           paidAmount,
+          profitAmount,
+          commissionBase,
           orderCount: employeeOrders.length,
           currency,
           targetAmount,
@@ -580,6 +588,16 @@ export default function ManagementTargetsPage() {
                             value={formatCurrency(employee.commissionAmount, employee.currency)}
                             tone="text-amber-700"
                           />
+                          <InfoTile
+                            label="Profit"
+                            value={formatCurrency(employee.profitAmount, employee.currency)}
+                            tone="text-sky-700"
+                          />
+                          <InfoTile
+                            label="Profit After VAT"
+                            value={formatCurrency(employee.commissionBase, employee.currency)}
+                            tone="text-violet-700"
+                          />
                         </div>
 
                         <div className="space-y-2">
@@ -623,6 +641,17 @@ export default function ManagementTargetsPage() {
                                   : "Top tier"}
                               </div>
                             </div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-md border bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                          <div className="text-xs opacity-80">
+                            Commission Calculation
+                          </div>
+                          <div className="mt-1 font-semibold">
+                            {formatCurrency(employee.commissionBase, employee.currency)} x{" "}
+                            {employee.currentTier?.rate || 0}% ={" "}
+                            {formatCurrency(employee.commissionAmount, employee.currency)}
                           </div>
                         </div>
 

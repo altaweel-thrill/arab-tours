@@ -5,9 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   query,
   serverTimestamp,
   updateDoc,
@@ -29,6 +31,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
 import ProtectedRouteWithPrivilege from "@/components/auth/protected-route-with-privilege";
 import { LoadingProgress } from "@/components/loading-progrss";
@@ -41,13 +51,19 @@ import {
   ExternalLink,
   FileText,
   FileWarning,
+  LockKeyhole,
+  Pencil,
   PlaneTakeoff,
+  Plus,
   ReceiptText,
+  Save,
+  Trash2,
   Upload,
   UserRound,
   WalletCards,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { usePrivilege } from "@/hooks/usePrivilege";
 
 /* ---------------- Types ---------------- */
 
@@ -68,10 +84,25 @@ type Service = {
   id: string;
   type: string;
   description: string;
+  qty?: number;
+  unitCost?: number;
   cost: number;
   price?: number;
   profit?: number;
   invoiceFile?: UploadedFile;
+};
+
+type ServiceAccountingState = {
+  entryIds: string[];
+  status: "pending" | "confirmed";
+};
+
+type ServiceDraft = {
+  type: string;
+  description: string;
+  qty: number;
+  unitCost: number;
+  invoiceFile: File | null;
 };
 
 type UploadedFile = {
@@ -99,15 +130,23 @@ type PaymentMethod = {
   isActive?: boolean;
 };
 
+const SERVICE_TYPES = ["Flight", "Hotel", "Visa", "Car", "Other"] as const;
+
 /* ---------------- Page ---------------- */
 
 export default function SalesOrderDetailsPage() {
   const { id } = useParams();
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
+  const canUpdateSales = usePrivilege("sales.update");
+  const canAddSales = usePrivilege("sales.add");
+  const canManageServices = canUpdateSales || canAddSales;
 
   const [order, setOrder] = useState<Order | null>(null);
   const [services, setServices] = useState<Service[]>([]);
+  const [serviceAccounting, setServiceAccounting] = useState<
+    Record<string, ServiceAccountingState>
+  >({});
   const [payments, setPayments] = useState<Payment[]>([]);
   const [customer, setCustomer] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -121,6 +160,17 @@ export default function SalesOrderDetailsPage() {
   const [paymentNote, setPaymentNote] = useState("");
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [savingPayment, setSavingPayment] = useState(false);
+  const [serviceDialogOpen, setServiceDialogOpen] = useState(false);
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
+  const [savingService, setSavingService] = useState(false);
+  const [deletingServiceId, setDeletingServiceId] = useState<string | null>(null);
+  const [serviceDraft, setServiceDraft] = useState<ServiceDraft>({
+    type: "Flight",
+    description: "",
+    qty: 1,
+    unitCost: 0,
+    invoiceFile: null,
+  });
 
   useEffect(() => {
     if (authLoading || !user || !id) return;
@@ -177,6 +227,43 @@ export default function SalesOrderDetailsPage() {
     })();
   }, [authLoading, id, router, user]);
 
+  useEffect(() => {
+    if (authLoading || !user || !id) return;
+
+    const accountingQuery = query(
+      collection(db, "accountingEntries"),
+      where("orderId", "==", id as string)
+    );
+
+    return onSnapshot(
+      accountingQuery,
+      (snapshot) => {
+        const nextServiceAccounting: Record<string, ServiceAccountingState> = {};
+        snapshot.docs.forEach((entryDoc) => {
+          const data = entryDoc.data() as any;
+          if (data.sourceType !== "service_cost" || !data.serviceId) return;
+
+          const current = nextServiceAccounting[data.serviceId] || {
+            entryIds: [],
+            status: "pending" as const,
+          };
+          nextServiceAccounting[data.serviceId] = {
+            entryIds: [...current.entryIds, entryDoc.id],
+            status:
+              current.status === "confirmed" || data.status === "confirmed"
+                ? "confirmed"
+                : "pending",
+          };
+        });
+        setServiceAccounting(nextServiceAccounting);
+      },
+      (error) => {
+        console.error(error);
+        toast.error("Failed to load service accounting status");
+      }
+    );
+  }, [authLoading, id, user]);
+
   const updateStatus = async (status: string) => {
     try {
       await updateDoc(doc(db, "salesOrders", id as string), { status });
@@ -190,6 +277,345 @@ export default function SalesOrderDetailsPage() {
   const safeNum = (value: any) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const isServiceConfirmed = (serviceId: string) =>
+    serviceAccounting[serviceId]?.status === "confirmed";
+
+  const getFreshServiceAccounting = async (serviceId: string) => {
+    const entriesSnap = await getDocs(
+      query(
+        collection(db, "accountingEntries"),
+        where("orderId", "==", id as string)
+      )
+    );
+    const matchingEntries = entriesSnap.docs.filter((entryDoc) => {
+      const data = entryDoc.data();
+      return data.sourceType === "service_cost" && data.serviceId === serviceId;
+    });
+    const accountingState: ServiceAccountingState = {
+      entryIds: matchingEntries.map((entryDoc) => entryDoc.id),
+      status: matchingEntries.some(
+        (entryDoc) => entryDoc.data().status === "confirmed"
+      )
+        ? "confirmed"
+        : "pending",
+    };
+
+    setServiceAccounting((prev) => ({
+      ...prev,
+      [serviceId]: accountingState,
+    }));
+    return accountingState;
+  };
+
+  const recalculateOrderTotals = async (nextServices: Service[]) => {
+    if (!order) return;
+
+    const totalCost = nextServices.reduce(
+      (sum, service) => sum + safeNum(service.cost),
+      0
+    );
+    const fullAmount = safeNum(order.fullAmount ?? order.totalPrice);
+    const totalProfit = fullAmount - totalCost;
+
+    await updateDoc(doc(db, "salesOrders", id as string), {
+      totalCost,
+      totalProfit,
+      updatedAt: serverTimestamp(),
+    });
+    setOrder((prev) =>
+      prev
+        ? {
+            ...prev,
+            totalCost,
+            totalProfit,
+          }
+        : prev
+    );
+  };
+
+  const uploadServiceInvoice = async (serviceId: string, file: File) => {
+    const filePath = `salesOrders/${id}/services/${serviceId}/invoice/${Date.now()}-${file.name}`;
+    const fileRef = ref(storage, filePath);
+    await uploadBytes(fileRef, file);
+    const url = await getDownloadURL(fileRef);
+
+    return {
+      name: file.name,
+      url,
+      path: filePath,
+    };
+  };
+
+  const openAddService = () => {
+    setEditingServiceId(null);
+    setServiceDraft({
+      type: "Flight",
+      description: "",
+      qty: 1,
+      unitCost: 0,
+      invoiceFile: null,
+    });
+    setServiceDialogOpen(true);
+  };
+
+  const openEditService = (service: Service) => {
+    if (isServiceConfirmed(service.id)) {
+      toast.error("Confirmed services cannot be edited.");
+      return;
+    }
+
+    const qty = Math.max(1, safeNum(service.qty) || 1);
+    setEditingServiceId(service.id);
+    setServiceDraft({
+      type: service.type || "Other",
+      description: service.description || "",
+      qty,
+      unitCost:
+        service.unitCost !== undefined
+          ? safeNum(service.unitCost)
+          : safeNum(service.cost) / qty,
+      invoiceFile: null,
+    });
+    setServiceDialogOpen(true);
+  };
+
+  const saveService = async () => {
+    if (!order || !canManageServices) {
+      toast.error("You do not have permission to update services.");
+      return;
+    }
+
+    const qty = Math.max(1, Math.floor(safeNum(serviceDraft.qty) || 1));
+    const unitCost = safeNum(serviceDraft.unitCost);
+    const cost = qty * unitCost;
+    const description = serviceDraft.description.trim();
+
+    if (!serviceDraft.type.trim()) {
+      toast.error("Service type is required.");
+      return;
+    }
+    if (unitCost < 0) {
+      toast.error("Unit cost cannot be negative.");
+      return;
+    }
+
+    try {
+      setSavingService(true);
+
+      if (editingServiceId) {
+        const accounting = await getFreshServiceAccounting(editingServiceId);
+        if (accounting.status === "confirmed") {
+          toast.error("Confirmed services cannot be edited.");
+          setServiceDialogOpen(false);
+          return;
+        }
+
+        const currentService = services.find(
+          (service) => service.id === editingServiceId
+        );
+        if (!currentService) return;
+
+        let invoiceFile = currentService.invoiceFile || null;
+        if (serviceDraft.invoiceFile) {
+          invoiceFile = await uploadServiceInvoice(
+            editingServiceId,
+            serviceDraft.invoiceFile
+          );
+        }
+
+        await updateDoc(
+          doc(db, "salesOrders", id as string, "services", editingServiceId),
+          {
+            type: serviceDraft.type.trim(),
+            description,
+            qty,
+            unitCost,
+            cost,
+            ...(serviceDraft.invoiceFile ? { invoiceFile } : {}),
+            updatedAt: serverTimestamp(),
+          }
+        );
+
+        if (accounting?.entryIds.length) {
+          await Promise.all(
+            accounting.entryIds.map((entryId) =>
+              updateDoc(doc(db, "accountingEntries", entryId), {
+                amount: cost,
+                description:
+                  description || `${serviceDraft.type.trim()} service cost`,
+                ...(serviceDraft.invoiceFile ? { file: invoiceFile } : {}),
+                updatedAt: serverTimestamp(),
+              })
+            )
+          );
+        } else {
+          const entryRef = await addDoc(collection(db, "accountingEntries"), {
+            orderId: id as string,
+            customerId: order.customerId,
+            direction: "out",
+            sourceType: "service_cost",
+            amount: cost,
+            currency: "SAR",
+            description:
+              description || `${serviceDraft.type.trim()} service cost`,
+            orderNumber: order.orderNumber || null,
+            file: invoiceFile,
+            status: "pending",
+            createdBy: user?.uid || null,
+            createdAt: serverTimestamp(),
+            confirmedBy: null,
+            confirmedAt: null,
+            serviceId: editingServiceId,
+          });
+          setServiceAccounting((prev) => ({
+            ...prev,
+            [editingServiceId]: {
+              entryIds: [entryRef.id],
+              status: "pending",
+            },
+          }));
+        }
+
+        const nextServices = services.map((service) =>
+          service.id === editingServiceId
+            ? {
+                ...service,
+                type: serviceDraft.type.trim(),
+                description,
+                qty,
+                unitCost,
+                cost,
+                invoiceFile,
+              }
+            : service
+        );
+        await recalculateOrderTotals(nextServices);
+        setServices(nextServices);
+        toast.success("Service updated");
+      } else {
+        const serviceRef = await addDoc(
+          collection(db, "salesOrders", id as string, "services"),
+          {
+            type: serviceDraft.type.trim(),
+            description,
+            qty,
+            unitCost,
+            cost,
+            invoiceFile: null,
+            createdAt: serverTimestamp(),
+          }
+        );
+
+        let invoiceFile: UploadedFile = null;
+        if (serviceDraft.invoiceFile) {
+          invoiceFile = await uploadServiceInvoice(
+            serviceRef.id,
+            serviceDraft.invoiceFile
+          );
+          await updateDoc(serviceRef, {
+            invoiceFile,
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        const entryRef = await addDoc(collection(db, "accountingEntries"), {
+          orderId: id as string,
+          customerId: order.customerId,
+          direction: "out",
+          sourceType: "service_cost",
+          amount: cost,
+          currency: "SAR",
+          description:
+            description || `${serviceDraft.type.trim()} service cost`,
+          orderNumber: order.orderNumber || null,
+          file: invoiceFile,
+          status: "pending",
+          createdBy: user?.uid || null,
+          createdAt: serverTimestamp(),
+          confirmedBy: null,
+          confirmedAt: null,
+          serviceId: serviceRef.id,
+        });
+
+        const nextServices = [
+          ...services,
+          {
+            id: serviceRef.id,
+            type: serviceDraft.type.trim(),
+            description,
+            qty,
+            unitCost,
+            cost,
+            invoiceFile,
+          },
+        ];
+        await recalculateOrderTotals(nextServices);
+        setServices(nextServices);
+        setServiceAccounting((prev) => ({
+          ...prev,
+          [serviceRef.id]: {
+            entryIds: [entryRef.id],
+            status: "pending",
+          },
+        }));
+        toast.success("Service added");
+      }
+
+      setServiceDialogOpen(false);
+    } catch (error) {
+      console.error(error);
+      toast.error(
+        editingServiceId ? "Failed to update service" : "Failed to add service"
+      );
+    } finally {
+      setSavingService(false);
+    }
+  };
+
+  const deleteService = async (service: Service) => {
+    if (!canManageServices) {
+      toast.error("You do not have permission to delete services.");
+      return;
+    }
+    if (!window.confirm(`Delete ${service.type} service?`)) return;
+
+    try {
+      setDeletingServiceId(service.id);
+      const accounting = await getFreshServiceAccounting(service.id);
+      if (accounting.status === "confirmed") {
+        toast.error("Confirmed services cannot be deleted.");
+        return;
+      }
+
+      await deleteDoc(
+        doc(db, "salesOrders", id as string, "services", service.id)
+      );
+
+      if (accounting?.entryIds.length) {
+        await Promise.all(
+          accounting.entryIds.map((entryId) =>
+            deleteDoc(doc(db, "accountingEntries", entryId))
+          )
+        );
+      }
+
+      const nextServices = services.filter((item) => item.id !== service.id);
+      await recalculateOrderTotals(nextServices);
+      setServices(nextServices);
+      setServiceAccounting((prev) => {
+        const next = { ...prev };
+        delete next[service.id];
+        return next;
+      });
+      toast.success("Service deleted");
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to delete service");
+    } finally {
+      setDeletingServiceId(null);
+    }
   };
 
   const calculatePaymentMethodFee = (
@@ -239,6 +665,14 @@ export default function SalesOrderDetailsPage() {
 
     try {
       setUploadingKey(key);
+      if (kind === "service") {
+        const accounting = await getFreshServiceAccounting(itemId);
+        if (accounting.status === "confirmed") {
+          toast.error("Confirmed services cannot be changed.");
+          return;
+        }
+      }
+
       const fileRef = ref(storage, filePath);
       await uploadBytes(fileRef, file);
       const url = await getDownloadURL(fileRef);
@@ -474,6 +908,9 @@ export default function SalesOrderDetailsPage() {
     paymentMethodPercentageRate,
     paymentMethodFixedFee
   );
+  const confirmedServicesCount = services.filter((service) =>
+    isServiceConfirmed(service.id)
+  ).length;
   const formatMoney = (value: any) =>
     `${safeNum(value).toLocaleString("en-US", {
       maximumFractionDigits: 2,
@@ -528,7 +965,8 @@ export default function SalesOrderDetailsPage() {
   const uploadControl = (
     kind: "service" | "payment",
     itemId: string,
-    label: string
+    label: string,
+    disabled = false
   ) => {
     const key = `${kind}-${itemId}`;
 
@@ -536,7 +974,7 @@ export default function SalesOrderDetailsPage() {
       <Input
         type="file"
         className="h-9 max-w-[220px] text-xs"
-        disabled={uploadingKey === key}
+        disabled={disabled || uploadingKey === key}
         aria-label={label}
         onChange={(event) => {
           const file = event.target.files?.[0];
@@ -645,10 +1083,23 @@ export default function SalesOrderDetailsPage() {
                 <div className="space-y-5">
                   <Card className="border bg-background shadow-sm">
                     <CardHeader className="border-b bg-muted/20 px-4 py-3">
-                      <CardTitle className="flex items-center gap-2 text-base">
-                        <PlaneTakeoff className="h-4 w-4 text-muted-foreground" />
-                        Services
-                      </CardTitle>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <CardTitle className="flex items-center gap-2 text-base">
+                            <PlaneTakeoff className="h-4 w-4 text-muted-foreground" />
+                            Services
+                          </CardTitle>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {confirmedServicesCount} confirmed / {services.length} total
+                          </div>
+                        </div>
+                        {canManageServices ? (
+                          <Button size="sm" onClick={openAddService}>
+                            <Plus className="h-4 w-4" />
+                            Add Service
+                          </Button>
+                        ) : null}
+                      </div>
                     </CardHeader>
                     <CardContent className="p-0">
                       {services.length === 0 ? (
@@ -657,7 +1108,7 @@ export default function SalesOrderDetailsPage() {
                         </div>
                       ) : (
                         <div className="overflow-x-auto">
-                          <table className="w-full min-w-[820px] text-sm">
+                          <table className="w-full min-w-[1080px] text-sm">
                             <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
                               <tr>
                                 <th className="px-4 py-3 text-left font-medium">
@@ -670,34 +1121,109 @@ export default function SalesOrderDetailsPage() {
                                   Cost
                                 </th>
                                 <th className="px-4 py-3 text-left font-medium">
+                                  Accounting
+                                </th>
+                                <th className="px-4 py-3 text-left font-medium">
                                   Invoice
                                 </th>
                                 <th className="px-4 py-3 text-left font-medium">
                                   Upload
                                 </th>
+                                <th className="px-4 py-3 text-right font-medium">
+                                  Actions
+                                </th>
                               </tr>
                             </thead>
                             <tbody>
-                              {services.map((s) => (
-                                <tr
-                                  key={s.id}
-                                  className="border-t transition-colors hover:bg-muted/20"
-                                >
-                                  <td className="px-4 py-4 font-medium">{s.type}</td>
-                                  <td className="px-4 py-4 text-muted-foreground">
-                                    {s.description || "-"}
-                                  </td>
-                                  <td className="px-4 py-4 text-right">
-                                    {formatMoney(s.cost)}
-                                  </td>
-                                  <td className="px-4 py-4">
-                                    {attachmentState(s.invoiceFile || null, "Invoice")}
-                                  </td>
-                                  <td className="px-4 py-4">
-                                    {uploadControl("service", s.id, "Upload Invoice")}
-                                  </td>
-                                </tr>
-                              ))}
+                              {services.map((s) => {
+                                const confirmed = isServiceConfirmed(s.id);
+
+                                return (
+                                  <tr
+                                    key={s.id}
+                                    className="border-t transition-colors hover:bg-muted/20"
+                                  >
+                                    <td className="px-4 py-4 font-medium">
+                                      {s.type}
+                                    </td>
+                                    <td className="px-4 py-4 text-muted-foreground">
+                                      {s.description || "-"}
+                                    </td>
+                                    <td className="px-4 py-4 text-right">
+                                      {formatMoney(s.cost)}
+                                    </td>
+                                    <td className="px-4 py-4">
+                                      <Badge
+                                        variant={confirmed ? "default" : "secondary"}
+                                        className={
+                                          confirmed
+                                            ? "bg-emerald-600 text-white hover:bg-emerald-600"
+                                            : ""
+                                        }
+                                      >
+                                        {confirmed ? (
+                                          <LockKeyhole className="mr-1 h-3.5 w-3.5" />
+                                        ) : (
+                                          <Clock className="mr-1 h-3.5 w-3.5" />
+                                        )}
+                                        {confirmed ? "Confirmed" : "Pending"}
+                                      </Badge>
+                                    </td>
+                                    <td className="px-4 py-4">
+                                      {attachmentState(
+                                        s.invoiceFile || null,
+                                        "Invoice"
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-4">
+                                      {confirmed ? (
+                                        <span className="text-xs text-muted-foreground">
+                                          Locked
+                                        </span>
+                                      ) : (
+                                        uploadControl(
+                                          "service",
+                                          s.id,
+                                          "Upload Invoice",
+                                          !canManageServices
+                                        )
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-4 text-right">
+                                      {confirmed ? (
+                                        <span className="text-xs font-medium text-emerald-600">
+                                          Confirmed by Accounting
+                                        </span>
+                                      ) : canManageServices ? (
+                                        <div className="flex justify-end gap-2">
+                                          <Button
+                                            variant="outline"
+                                            size="icon"
+                                            onClick={() => openEditService(s)}
+                                            title="Edit service"
+                                          >
+                                            <Pencil className="h-4 w-4" />
+                                          </Button>
+                                          <Button
+                                            variant="outline"
+                                            size="icon"
+                                            onClick={() => deleteService(s)}
+                                            disabled={deletingServiceId === s.id}
+                                            title="Delete service"
+                                            className="text-rose-600 hover:text-rose-700"
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                          </Button>
+                                        </div>
+                                      ) : (
+                                        <span className="text-xs text-muted-foreground">
+                                          No permission
+                                        </span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -935,6 +1461,147 @@ export default function SalesOrderDetailsPage() {
           </div>
         </SidebarInset>
       </SidebarProvider>
+
+      <Dialog
+        open={serviceDialogOpen}
+        onOpenChange={(open) => {
+          setServiceDialogOpen(open);
+          if (!open) setEditingServiceId(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {editingServiceId ? "Edit Service" : "Add Service"}
+            </DialogTitle>
+            <DialogDescription className="sr-only">
+              Add or update a pending service for this sales order.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="service-type">Service Type</Label>
+                <select
+                  id="service-type"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  value={serviceDraft.type}
+                  onChange={(event) =>
+                    setServiceDraft((prev) => ({
+                      ...prev,
+                      type: event.target.value,
+                    }))
+                  }
+                >
+                  {!SERVICE_TYPES.includes(
+                    serviceDraft.type as (typeof SERVICE_TYPES)[number]
+                  ) && serviceDraft.type ? (
+                    <option value={serviceDraft.type}>{serviceDraft.type}</option>
+                  ) : null}
+                  {SERVICE_TYPES.map((serviceType) => (
+                    <option key={serviceType} value={serviceType}>
+                      {serviceType}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="service-qty">Quantity</Label>
+                <Input
+                  id="service-qty"
+                  type="number"
+                  min={1}
+                  value={serviceDraft.qty}
+                  onChange={(event) =>
+                    setServiceDraft((prev) => ({
+                      ...prev,
+                      qty: Math.max(1, safeNum(event.target.value)),
+                    }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="service-description">Description</Label>
+              <Textarea
+                id="service-description"
+                value={serviceDraft.description}
+                onChange={(event) =>
+                  setServiceDraft((prev) => ({
+                    ...prev,
+                    description: event.target.value,
+                  }))
+                }
+                placeholder="Service details"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="service-unit-cost">Unit Cost (SAR)</Label>
+                <Input
+                  id="service-unit-cost"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={serviceDraft.unitCost}
+                  onChange={(event) =>
+                    setServiceDraft((prev) => ({
+                      ...prev,
+                      unitCost: safeNum(event.target.value),
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Total Cost</Label>
+                <div className="flex h-10 items-center rounded-md border bg-muted/20 px-3 text-sm font-semibold">
+                  {formatMoney(
+                    Math.max(1, safeNum(serviceDraft.qty)) *
+                      safeNum(serviceDraft.unitCost)
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="service-invoice">
+                Invoice {editingServiceId ? "(optional replacement)" : "(optional)"}
+              </Label>
+              <Input
+                id="service-invoice"
+                type="file"
+                onChange={(event) =>
+                  setServiceDraft((prev) => ({
+                    ...prev,
+                    invoiceFile: event.target.files?.[0] || null,
+                  }))
+                }
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setServiceDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={saveService} disabled={savingService}>
+                <Save className="h-4 w-4" />
+                {savingService
+                  ? "Saving..."
+                  : editingServiceId
+                    ? "Save Changes"
+                    : "Add Service"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </ProtectedRouteWithPrivilege>
   );
 }

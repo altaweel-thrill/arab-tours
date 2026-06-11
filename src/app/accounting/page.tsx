@@ -24,6 +24,7 @@ import {
   Filter,
   Paperclip,
   ReceiptText,
+  RotateCcw,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
@@ -499,6 +500,41 @@ export default function AccountingPage() {
     }
   };
 
+  const unconfirmEntry = async (entryId: string) => {
+    if (!canConfirm) {
+      toast.error("You do not have permission to update confirmations.");
+      return;
+    }
+
+    try {
+      setConfirmingId(entryId);
+      await updateDoc(doc(db, "accountingEntries", entryId), {
+        status: "pending",
+        confirmedBy: null,
+        confirmedAt: null,
+      });
+
+      setEntries((prev) =>
+        prev.map((entry) =>
+          entry.id === entryId
+            ? {
+                ...entry,
+                status: "pending",
+                confirmedBy: null,
+                confirmedAt: null,
+              }
+            : entry
+        )
+      );
+      toast.success("Confirmation removed");
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to remove confirmation");
+    } finally {
+      setConfirmingId(null);
+    }
+  };
+
   const openOrderDetails = async (orderId: string) => {
     if (!orderId) return;
 
@@ -938,9 +974,20 @@ export default function AccountingPage() {
                                         : "Confirm"}
                                     </Button>
                                   ) : (
-                                    <span className="text-xs text-muted-foreground">
-                                      Confirmed
-                                    </span>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="cursor-pointer"
+                                      onClick={() => unconfirmEntry(entry.id)}
+                                      disabled={
+                                        !canConfirm || confirmingId === entry.id
+                                      }
+                                    >
+                                      <RotateCcw className="mr-1 h-4 w-4" />
+                                      {confirmingId === entry.id
+                                        ? "Updating..."
+                                        : "Undo Confirm"}
+                                    </Button>
                                   )}
                                 </td>
                               </tr>

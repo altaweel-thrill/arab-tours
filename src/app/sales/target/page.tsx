@@ -47,6 +47,7 @@ type SalesOrder = {
   status?: string;
   fullAmount?: number;
   totalPrice?: number;
+  totalProfit?: number;
   paidAmount?: number;
   remainingAmount?: number;
   createdAt?: any;
@@ -208,16 +209,23 @@ export default function SalesTargetPage() {
       (sum, order) => sum + safeNum(order.remainingAmount),
       0
     );
+    const profit = monthOrders.reduce(
+      (sum, order) => sum + safeNum(order.totalProfit),
+      0
+    );
+    const profitAfterVat = profit * 0.85;
     const target = safeNum(plan?.targetAmount);
     const tier = currentTier(tiers, sales);
     const next = nextTier(tiers, sales);
-    const commission = tier ? (sales * safeNum(tier.rate)) / 100 : 0;
+    const commission = tier ? (profitAfterVat * safeNum(tier.rate)) / 100 : 0;
     const progress = target ? Math.min(100, Math.round((sales / target) * 100)) : 0;
 
     return {
       sales,
       paid,
       remaining,
+      profit,
+      profitAfterVat,
       target,
       tier,
       next,
@@ -360,6 +368,11 @@ export default function SalesTargetPage() {
                             label="Remaining"
                             value={formatCurrency(stats.remaining)}
                           />
+                          <InfoBox label="Profit" value={formatCurrency(stats.profit)} />
+                          <InfoBox
+                            label="Profit After VAT"
+                            value={formatCurrency(stats.profitAfterVat)}
+                          />
                         </div>
 
                         {!plan ? (
@@ -385,6 +398,17 @@ export default function SalesTargetPage() {
                               stats.tier.minSales
                             )}`
                           : "-"}
+                      </div>
+                    </div>
+                    <div className="rounded-md border bg-amber-50 p-3 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                      <div className="text-xs opacity-80">Commission Calculation</div>
+                      <div className="mt-1 text-sm font-semibold">
+                        {formatCurrency(stats.profitAfterVat)} x{" "}
+                        {stats.tier?.rate || 0}% ={" "}
+                        {formatCurrency(stats.commission)}
+                      </div>
+                      <div className="mt-1 text-xs opacity-80">
+                        Profit after deducting 15% VAT
                       </div>
                     </div>
                     <div className="rounded-md border bg-muted/10 p-3">
