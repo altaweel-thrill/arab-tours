@@ -153,17 +153,17 @@ function normalizeTiers(tiers: CommissionTier[]) {
     .sort((a, b) => a.minSales - b.minSales);
 }
 
-function getCurrentTier(tiers: CommissionTier[], achievedSales: number) {
+function getCurrentTier(tiers: CommissionTier[], achievedProfit: number) {
   const normalized = normalizeTiers(tiers);
   return (
     normalized
-      .filter((tier) => achievedSales >= tier.minSales)
+      .filter((tier) => achievedProfit >= tier.minSales)
       .sort((a, b) => b.minSales - a.minSales)[0] || normalized[0] || null
   );
 }
 
-function getNextTier(tiers: CommissionTier[], achievedSales: number) {
-  return normalizeTiers(tiers).find((tier) => tier.minSales > achievedSales) || null;
+function getNextTier(tiers: CommissionTier[], achievedProfit: number) {
+  return normalizeTiers(tiers).find((tier) => tier.minSales > achievedProfit) || null;
 }
 
 export default function ManagementTargetsPage() {
@@ -280,8 +280,8 @@ export default function ManagementTargetsPage() {
         const currency = "SAR";
         const targetAmount = safeNum(employeePlan?.targetAmount);
         const tiers = employeePlan?.tiers?.length ? employeePlan.tiers : defaultTiers;
-        const currentTier = getCurrentTier(tiers, achievedSales);
-        const nextTier = getNextTier(tiers, achievedSales);
+        const currentTier = getCurrentTier(tiers, profitAmount);
+        const nextTier = getNextTier(tiers, profitAmount);
         const commissionAmount = currentTier
           ? (commissionBase * safeNum(currentTier.rate)) / 100
           : 0;
@@ -624,7 +624,7 @@ export default function ManagementTargetsPage() {
                                   ? `${employee.currentTier.rate}% from ${formatCurrency(
                                       employee.currentTier.minSales,
                                       employee.currency
-                                    )}`
+                                    )} profit`
                                   : "-"}
                               </div>
                             </div>
@@ -637,7 +637,7 @@ export default function ManagementTargetsPage() {
                                   ? `${formatCurrency(
                                       employee.nextTier.minSales,
                                       employee.currency
-                                    )} / ${employee.nextTier.rate}%`
+                                    )} profit / ${employee.nextTier.rate}%`
                                   : "Top tier"}
                               </div>
                             </div>
@@ -698,7 +698,7 @@ export default function ManagementTargetsPage() {
                 <div>
                   <div className="font-semibold">Commission Tiers</div>
                   <div className="text-xs text-muted-foreground">
-                    Highest matching tier applies to total monthly sales.
+                    Highest matching tier applies to total monthly profit.
                   </div>
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={addTier}>
@@ -714,7 +714,7 @@ export default function ManagementTargetsPage() {
                     className="grid grid-cols-1 gap-3 rounded-md border bg-background p-3 md:grid-cols-[1fr_1fr_auto]"
                   >
                     <div className="space-y-1">
-                      <Label htmlFor={`${tier.id}-min`}>Minimum Sales</Label>
+                      <Label htmlFor={`${tier.id}-min`}>Minimum Profit</Label>
                       <Input
                         id={`${tier.id}-min`}
                         type="number"

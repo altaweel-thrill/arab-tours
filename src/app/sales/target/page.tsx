@@ -118,18 +118,18 @@ function normalizeTiers(tiers?: CommissionTier[]) {
     .sort((a, b) => a.minSales - b.minSales);
 }
 
-function currentTier(tiers: CommissionTier[], sales: number) {
+function currentTier(tiers: CommissionTier[], profit: number) {
   return (
     tiers
-      .filter((tier) => sales >= tier.minSales)
+      .filter((tier) => profit >= tier.minSales)
       .sort((a, b) => b.minSales - a.minSales)[0] ||
     tiers[0] ||
     null
   );
 }
 
-function nextTier(tiers: CommissionTier[], sales: number) {
-  return tiers.find((tier) => tier.minSales > sales) || null;
+function nextTier(tiers: CommissionTier[], profit: number) {
+  return tiers.find((tier) => tier.minSales > profit) || null;
 }
 
 function compactStatusLabel(status?: string) {
@@ -215,8 +215,8 @@ export default function SalesTargetPage() {
     );
     const profitAfterVat = profit * 0.85;
     const target = safeNum(plan?.targetAmount);
-    const tier = currentTier(tiers, sales);
-    const next = nextTier(tiers, sales);
+    const tier = currentTier(tiers, profit);
+    const next = nextTier(tiers, profit);
     const commission = tier ? (profitAfterVat * safeNum(tier.rate)) / 100 : 0;
     const progress = target ? Math.min(100, Math.round((sales / target) * 100)) : 0;
 
@@ -246,7 +246,7 @@ export default function SalesTargetPage() {
               <div>
                 <h2 className="font-semibold">Target</h2>
                 <p className="text-xs text-muted-foreground">
-                  Your monthly sales target and commission tier
+                  Your monthly sales target and profit-based commission tier
                 </p>
               </div>
             </div>
@@ -394,9 +394,9 @@ export default function SalesTargetPage() {
                       <div className="text-xs text-muted-foreground">Current Tier</div>
                       <div className="mt-1 text-lg font-semibold">
                         {stats.tier
-                          ? `${stats.tier.rate}% after ${formatCurrency(
+                          ? `${stats.tier.rate}% from ${formatCurrency(
                               stats.tier.minSales
-                            )}`
+                            )} profit`
                           : "-"}
                       </div>
                     </div>
@@ -415,7 +415,7 @@ export default function SalesTargetPage() {
                       <div className="text-xs text-muted-foreground">Next Tier</div>
                       <div className="mt-1 text-lg font-semibold">
                         {stats.next
-                          ? `${formatCurrency(stats.next.minSales)} / ${
+                          ? `${formatCurrency(stats.next.minSales)} profit / ${
                               stats.next.rate
                             }%`
                           : "Top tier"}
@@ -436,7 +436,7 @@ export default function SalesTargetPage() {
                             <span>Tier {index + 1}</span>
                           </div>
                           <Badge variant="secondary">
-                            {formatCurrency(tier.minSales)} / {tier.rate}%
+                            {formatCurrency(tier.minSales)} profit / {tier.rate}%
                           </Badge>
                         </div>
                       ))}
