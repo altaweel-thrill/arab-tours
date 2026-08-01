@@ -122,9 +122,7 @@ function currentTier(tiers: CommissionTier[], profit: number) {
   return (
     tiers
       .filter((tier) => profit >= tier.minSales)
-      .sort((a, b) => b.minSales - a.minSales)[0] ||
-    tiers[0] ||
-    null
+      .sort((a, b) => b.minSales - a.minSales)[0] || null
   );
 }
 
@@ -218,7 +216,10 @@ export default function SalesTargetPage() {
     const tier = currentTier(tiers, profit);
     const next = nextTier(tiers, profit);
     const commission = tier ? (profitAfterVat * safeNum(tier.rate)) / 100 : 0;
-    const progress = target ? Math.min(100, Math.round((sales / target) * 100)) : 0;
+    const targetProgressAmount = profitAfterVat;
+    const progress = target
+      ? Math.min(100, Math.round((targetProgressAmount / target) * 100))
+      : 0;
 
     return {
       sales,
@@ -226,6 +227,7 @@ export default function SalesTargetPage() {
       remaining,
       profit,
       profitAfterVat,
+      targetProgressAmount,
       target,
       tier,
       next,
@@ -346,7 +348,7 @@ export default function SalesTargetPage() {
                         <div>
                           <div className="mb-2 flex items-center justify-between text-sm">
                             <span className="text-muted-foreground">
-                              Target Achievement
+                              Profit After VAT Achievement
                             </span>
                             <span className="font-semibold">{stats.progress}%</span>
                           </div>
@@ -357,7 +359,7 @@ export default function SalesTargetPage() {
                             />
                           </div>
                           <div className="mt-2 text-xs text-muted-foreground">
-                            {formatCurrency(stats.sales)} of{" "}
+                            {formatCurrency(stats.targetProgressAmount)} of{" "}
                             {stats.target ? formatCurrency(stats.target) : "no target"}
                           </div>
                         </div>
@@ -397,15 +399,21 @@ export default function SalesTargetPage() {
                           ? `${stats.tier.rate}% from ${formatCurrency(
                               stats.tier.minSales
                             )} profit`
-                          : "-"}
+                          : "Not reached yet"}
                       </div>
                     </div>
                     <div className="rounded-md border bg-amber-50 p-3 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
                       <div className="text-xs opacity-80">Commission Calculation</div>
                       <div className="mt-1 text-sm font-semibold">
-                        {formatCurrency(stats.profitAfterVat)} x{" "}
-                        {stats.tier?.rate || 0}% ={" "}
-                        {formatCurrency(stats.commission)}
+                        {stats.tier
+                          ? `${formatCurrency(stats.profitAfterVat)} x ${
+                              stats.tier.rate
+                            }% = ${formatCurrency(stats.commission)}`
+                          : stats.next
+                            ? `No commission until profit reaches ${formatCurrency(
+                                stats.next.minSales
+                              )}.`
+                            : "No commission tier available."}
                       </div>
                       <div className="mt-1 text-xs opacity-80">
                         Profit after deducting 15% VAT

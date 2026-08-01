@@ -158,7 +158,7 @@ function getCurrentTier(tiers: CommissionTier[], achievedProfit: number) {
   return (
     normalized
       .filter((tier) => achievedProfit >= tier.minSales)
-      .sort((a, b) => b.minSales - a.minSales)[0] || normalized[0] || null
+      .sort((a, b) => b.minSales - a.minSales)[0] || null
   );
 }
 
@@ -286,7 +286,7 @@ export default function ManagementTargetsPage() {
           ? (commissionBase * safeNum(currentTier.rate)) / 100
           : 0;
         const progress = targetAmount
-          ? Math.min(100, Math.round((achievedSales / targetAmount) * 100))
+          ? Math.min(100, Math.round((commissionBase / targetAmount) * 100))
           : 0;
 
         return {
@@ -314,6 +314,10 @@ export default function ManagementTargetsPage() {
   const overview = useMemo(() => {
     const totalTarget = employeeRows.reduce((sum, row) => sum + row.targetAmount, 0);
     const totalSales = employeeRows.reduce((sum, row) => sum + row.achievedSales, 0);
+    const totalProfitAfterVat = employeeRows.reduce(
+      (sum, row) => sum + row.commissionBase,
+      0
+    );
     const totalCommission = employeeRows.reduce(
       (sum, row) => sum + row.commissionAmount,
       0
@@ -323,6 +327,7 @@ export default function ManagementTargetsPage() {
     return {
       totalTarget,
       totalSales,
+      totalProfitAfterVat,
       totalCommission,
       configured,
       employees: employeeRows.length,
@@ -528,10 +533,12 @@ export default function ManagementTargetsPage() {
                   title="Achievement"
                   value={`${
                     overview.totalTarget
-                      ? Math.round((overview.totalSales / overview.totalTarget) * 100)
+                      ? Math.round(
+                          (overview.totalProfitAfterVat / overview.totalTarget) * 100
+                        )
                       : 0
                   }%`}
-                  detail="Target progress"
+                  detail="Profit after VAT progress"
                   icon={<TrendingUp className="h-5 w-5" />}
                   tone="bg-teal-50 text-teal-700 dark:bg-teal-950/40"
                 />
@@ -602,7 +609,9 @@ export default function ManagementTargetsPage() {
 
                         <div className="space-y-2">
                           <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Target Progress</span>
+                            <span className="text-muted-foreground">
+                              Profit After VAT Progress
+                            </span>
                             <span className="font-medium">{employee.progress}%</span>
                           </div>
                           <div className="h-2 rounded-full bg-muted">
@@ -625,7 +634,7 @@ export default function ManagementTargetsPage() {
                                       employee.currentTier.minSales,
                                       employee.currency
                                     )} profit`
-                                  : "-"}
+                                  : "Not reached yet"}
                               </div>
                             </div>
                             <div className="text-right">
@@ -649,9 +658,20 @@ export default function ManagementTargetsPage() {
                             Commission Calculation
                           </div>
                           <div className="mt-1 font-semibold">
-                            {formatCurrency(employee.commissionBase, employee.currency)} x{" "}
-                            {employee.currentTier?.rate || 0}% ={" "}
-                            {formatCurrency(employee.commissionAmount, employee.currency)}
+                            {employee.currentTier
+                              ? `${formatCurrency(
+                                  employee.commissionBase,
+                                  employee.currency
+                                )} x ${employee.currentTier.rate}% = ${formatCurrency(
+                                  employee.commissionAmount,
+                                  employee.currency
+                                )}`
+                              : employee.nextTier
+                                ? `No commission until profit reaches ${formatCurrency(
+                                    employee.nextTier.minSales,
+                                    employee.currency
+                                  )}.`
+                                : "No commission tier available."}
                           </div>
                         </div>
 
