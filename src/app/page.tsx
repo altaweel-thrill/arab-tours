@@ -101,6 +101,7 @@ type SimpleDoc = {
   total?: number;
   totalPrice?: number;
   fullAmount?: number;
+  totalProfit?: number;
   paidAmount?: number;
   status?: string;
 };
@@ -130,7 +131,7 @@ export default function DashboardPage() {
   const [salesCount, setSalesCount] = useState(0);
   const [revenue, setRevenue] = useState(0);
   const [targetAmount, setTargetAmount] = useState(0);
-  const [monthlySales, setMonthlySales] = useState(0);
+  const [monthlyProfitAfterVat, setMonthlyProfitAfterVat] = useState(0);
 
   // deltas (month-over-month)
   const [customersDelta, setCustomersDelta] = useState(0);
@@ -233,7 +234,7 @@ export default function DashboardPage() {
 
         const revThis = sumOrders(salesThisMonth);
         const revPrev = sumOrders(salesPrevMonth);
-        setMonthlySales(revThis);
+        setMonthlyProfitAfterVat(sumProfitAfterVat(salesThisMonth));
         setRevenueDelta(percentDelta(revThis, revPrev));
 
         // ---------- Mini charts ----------
@@ -283,7 +284,7 @@ export default function DashboardPage() {
   }
 
   const targetProgress = targetAmount
-    ? Math.min(100, Math.round((monthlySales / targetAmount) * 100))
+    ? Math.min(100, Math.round((monthlyProfitAfterVat / targetAmount) * 100))
     : 0;
 
   return (
@@ -482,8 +483,8 @@ export default function DashboardPage() {
                       href: "/sales/target",
                     },
                     {
-                      c1: "Month Sales",
-                      c2: formatCurrency(monthlySales),
+                      c1: "Profit After VAT",
+                      c2: formatCurrency(monthlyProfitAfterVat),
                       href: "/sales",
                     },
                     {
@@ -813,6 +814,14 @@ function docsInRange(docs: SimpleDoc[], from: Date, to: Date) {
 
 function sumOrders(orders: SimpleDoc[]) {
   return orders.reduce((acc, order) => acc + orderRevenue(order), 0);
+}
+
+function sumProfitAfterVat(orders: SimpleDoc[]) {
+  const profit = orders.reduce(
+    (acc, order) => acc + safeNum(order.totalProfit),
+    0
+  );
+  return profit * 0.85;
 }
 
 function orderRevenue(order: any) {
